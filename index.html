@@ -11,6 +11,9 @@
     <!-- FontAwesome (アイコン用) -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
+    <!-- SheetJS (Excel出力用) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
     <!-- React本体 -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -44,6 +47,7 @@
           const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
           const [analyzingIndex, setAnalyzingIndex] = useState(-1);
           const [error, setError] = useState(null);
+          const [toastMessage, setToastMessage] = useState(null); // トースト通知用
           
           // UI状態
           const [viewMode, setViewMode] = useState('split');
@@ -57,6 +61,10 @@
             name: 250, quantity: 80, unit: 80, unit_price: 100, price: 120, action: 50
           });
           const [resizeState, setResizeState] = useState(null);
+
+          // エクスポートメニュー状態
+          const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
+          const exportMenuRef = useRef(null);
 
           // APIキー管理
           const [userApiKey, setUserApiKey] = useState("");
@@ -108,7 +116,20 @@
             };
           }, [isDragging, resizeState]);
 
-          // --- ドラッグ & リサイズ (省略せず維持) ---
+          // プルダウンメニューの外側クリックで閉じる処理
+          useEffect(() => {
+            const handleClickOutside = (event) => {
+              if (exportMenuRef.current && !exportMenuRef.current.contains(event.target)) {
+                setIsExportMenuOpen(false);
+              }
+            };
+            document.addEventListener('mousedown', handleClickOutside);
+            return () => {
+              document.removeEventListener('mousedown', handleClickOutside);
+            };
+          }, []);
+
+          // --- ドラッグ & リサイズ ---
           const startDrag = (e) => {
             if (resizeState) return;
             if (e.target.tagName.toLowerCase() === 'input') return;
@@ -338,30 +359,13 @@
             });
           };
 
-          // --- 一括エクスポート機能 ---
-          const exportJSON = () => {
-            const exportData = extractedDataList.map((data, index) => {
-              const { isAnalyzed, ...rest } = data; // 内部フラグを削除
-              return { file_name: imageFiles[index]?.name || `file_${index+1}`, ...rest };
-            });
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
-            const downloadAnchorNode = document.createElement('a');
-            downloadAnchorNode.setAttribute("href", dataStr);
-            downloadAnchorNode.setAttribute("download", "extracted_documents_all.json");
-            document.body.appendChild(downloadAnchorNode);
-            downloadAnchorNode.click();
-            downloadAnchorNode.remove();
-          };
-
-          const exportCSV = () => {
+          // --- エクスポート用データ生成共通関数 ---
+          const generateCSVContent = () => {
             const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-            // 全ファイルを1つのデータベースのようなフラット形式にする
             let csvContent = "ファイル名,書類種別,発行日,宛先,発行元,合計金額,品名,数量,単位,単価,金額\n";
             
             extractedDataList.forEach((data, index) => {
               const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
-              
-              // CSVエスケープ処理 (ダブルクォートをエスケープ)
               const escapeCSV = (str) => String(str || '').replace(/"/g, '""');
               
               const docType = escapeCSV(data.document_type);
@@ -382,7 +386,26 @@
                 csvContent += `${baseRow},"","",0,"",0,0\n`;
               }
             });
+            return { bom, csvContent };
+          };
 
+          // --- 一括エクスポート機能 ---
+          const exportJSON = () => {
+            const exportData = extractedDataList.map((data, index) => {
+              const { isAnalyzed, ...rest } = data; // 内部フラグを削除
+              return { file_name: imageFiles[index]?.name || `file_${index+1}`, ...rest };
+            });
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", "extracted_documents_all.json");
+            document.body.appendChild(downloadAnchorNode);
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+          };
+
+          const exportCSV = () => {
+            const { bom, csvContent } = generateCSVContent();
             const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const downloadAnchorNode = document.createElement('a');
@@ -391,6 +414,128 @@
             document.body.appendChild(downloadAnchorNode);
             downloadAnchorNode.click();
             downloadAnchorNode.remove();
+          };
+
+          const exportExcel = () => {
+            if (typeof XLSX === 'undefined') {
+              setError("Excel生成ライブラリの読み込みに失敗しました。");
+              return;
+            }
+            
+            // Excel出力用の二次元配列データを作成
+            const aoa = [
+              ["ファイル名", "書類種別", "発行日", "宛先", "発行元", "合計金額", "品名", "数量", "単位", "単価", "金額"]
+            ];
+            
+            extractedDataList.forEach((data, index) => {
+              const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
+              const baseRow = [fileName, data.document_type || "", data.date || "", data.recipient || "", data.issuer || "", data.total_amount || 0];
+              
+              if (data.items && data.items.length > 0) {
+                data.items.forEach(item => {
+                  aoa.push([...baseRow, item.name || "", item.quantity || 0, item.unit || "", item.unit_price || 0, item.price || 0]);
+                });
+              } else {
+                aoa.push([...baseRow, "", 0, "", 0, 0]);
+              }
+            });
+
+            const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "抽出データ");
+            XLSX.writeFile(workbook, "extracted_documents_all.xlsx");
+          };
+
+          const exportPDF = () => {
+            // PDF出力（印刷用ウィンドウを開いて印刷させる方式が日本語フォントの文字化けを防ぐため最適）
+            const printWindow = window.open('', '_blank');
+            if (!printWindow) {
+              setError("ポップアップがブロックされました。PDF出力するにはポップアップを許可してください。");
+              return;
+            }
+            
+            let html = `
+              <!DOCTYPE html>
+              <html lang="ja">
+              <head>
+                <meta charset="UTF-8">
+                <title>抽出データ一覧 (PDF用)</title>
+                <style>
+                  body { font-family: sans-serif; font-size: 11px; padding: 20px; color: #333; }
+                  table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+                  th, td { border: 1px solid #ccc; padding: 6px; text-align: left; }
+                  th { background-color: #f8f9fa; font-weight: bold; }
+                  .text-right { text-align: right; }
+                  @media print {
+                    @page { margin: 15mm; size: landscape; }
+                  }
+                </style>
+              </head>
+              <body>
+                <h2>抽出データ一覧</h2>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ファイル名</th><th>書類種別</th><th>発行日</th><th>宛先</th><th>発行元</th><th>合計金額</th>
+                      <th>品名</th><th>数量</th><th>単位</th><th>単価</th><th>金額</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+            `;
+            
+            extractedDataList.forEach((data, index) => {
+              const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
+              
+              if (data.items && data.items.length > 0) {
+                data.items.forEach(item => {
+                  html += `<tr>
+                    <td>${fileName}</td><td>${data.document_type || ''}</td><td>${data.date || ''}</td><td>${data.recipient || ''}</td><td>${data.issuer || ''}</td><td class="text-right">${data.total_amount || 0}</td>
+                    <td>${item.name || ''}</td><td class="text-right">${item.quantity || 0}</td><td>${item.unit || ''}</td><td class="text-right">${item.unit_price || 0}</td><td class="text-right">${item.price || 0}</td>
+                  </tr>`;
+                });
+              } else {
+                html += `<tr>
+                  <td>${fileName}</td><td>${data.document_type || ''}</td><td>${data.date || ''}</td><td>${data.recipient || ''}</td><td>${data.issuer || ''}</td><td class="text-right">${data.total_amount || 0}</td>
+                  <td></td><td></td><td></td><td></td><td></td>
+                </tr>`;
+              }
+            });
+
+            html += `
+                  </tbody>
+                </table>
+                <script>
+                  window.onload = function() {
+                    setTimeout(function() { 
+                      window.print(); 
+                      // 印刷ダイアログが閉じられたらウィンドウを閉じる（一部ブラウザ用）
+                      setTimeout(function() { window.close(); }, 500);
+                    }, 500);
+                  };
+                <\/script>
+              </body>
+              </html>
+            `;
+            
+            printWindow.document.write(html);
+            printWindow.document.close();
+          };
+
+          const copyCSVToClipboard = () => {
+            const { csvContent } = generateCSVContent();
+            try {
+              const textArea = document.createElement("textarea");
+              textArea.value = csvContent;
+              document.body.appendChild(textArea);
+              textArea.select();
+              document.execCommand("copy");
+              textArea.remove();
+              
+              setToastMessage("CSV形式でクリップボードにコピーしました");
+              setTimeout(() => setToastMessage(null), 3000);
+            } catch (err) {
+              setError("クリップボードへのコピーに失敗しました。");
+            }
           };
 
           const renderResizableHeader = (label, colKey) => (
@@ -403,6 +548,7 @@
             </th>
           );
 
+          // フォームコンテンツの描画
           const renderFormContent = (isOverlay = false) => {
             const inputBase = "w-full p-2 border rounded outline-none transition-colors font-medium ";
             const textInputClass = isOverlay 
@@ -496,11 +642,19 @@
           };
 
           return (
-            <div className="min-h-screen bg-gray-50 text-gray-800 p-4 md:p-8"
+            <div className="min-h-screen bg-gray-50 text-gray-800 p-4 md:p-8 relative"
               onMouseMove={resizeState ? onResize : null}
               onMouseUp={resizeState ? endResize : null}
               onMouseLeave={resizeState ? endResize : null}
             >
+              {/* トースト通知 */}
+              {toastMessage && (
+                <div className="fixed top-6 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-5 py-3 rounded-lg shadow-2xl z-50 flex items-center gap-3 transition-all animate-fade-in-down">
+                  <FaIcon name="circle-check" className="text-green-400" size={20} />
+                  <span className="font-medium">{toastMessage}</span>
+                </div>
+              )}
+
               <div className="max-w-7xl mx-auto">
                 <header className="mb-6 flex flex-col md:flex-row justify-between items-center gap-4 border-b border-gray-200 pb-4">
                   <div>
@@ -532,12 +686,58 @@
                       <FaIcon name="gear" size={16} /> API設定
                     </button>
 
-                    <button onClick={exportJSON} disabled={imageFiles.length === 0} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">
-                      <FaIcon name="file-code" size={16} /> 全件JSON
-                    </button>
-                    <button onClick={exportCSV} disabled={imageFiles.length === 0} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 font-bold shadow-sm">
-                      <FaIcon name="download" size={16} /> 全件CSV
-                    </button>
+                    {/* エクスポートメニュー（プルダウン） */}
+                    <div className="relative" ref={exportMenuRef}>
+                      <button 
+                        onClick={() => setIsExportMenuOpen(!isExportMenuOpen)} 
+                        disabled={imageFiles.length === 0}
+                        className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-bold shadow-sm transition-colors"
+                      >
+                        <FaIcon name="download" size={16} /> 
+                        保存・出力
+                        <FaIcon name="chevron-down" size={12} className={`transition-transform duration-200 ${isExportMenuOpen ? 'rotate-180' : ''}`} />
+                      </button>
+
+                      {isExportMenuOpen && (
+                        <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden z-50">
+                          <div className="py-1">
+                            <button onClick={() => { exportCSV(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors">
+                              <FaIcon name="file-csv" className="text-gray-500 w-5 text-center" size={18} />
+                              <div>
+                                <div className="font-bold">CSV形式で保存</div>
+                                <div className="text-xs text-gray-500 mt-0.5">表計算ソフトで編集可能</div>
+                              </div>
+                            </button>
+                            <button onClick={() => { exportExcel(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-t border-gray-100">
+                              <FaIcon name="file-excel" className="text-green-600 w-5 text-center" size={18} />
+                              <div>
+                                <div className="font-bold text-green-700">Excel形式で保存</div>
+                                <div className="text-xs text-gray-500 mt-0.5">.xlsxファイルとして保存</div>
+                              </div>
+                            </button>
+                            <button onClick={() => { exportPDF(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-t border-gray-100">
+                              <FaIcon name="file-pdf" className="text-red-500 w-5 text-center" size={18} />
+                              <div>
+                                <div className="font-bold text-red-600">PDF形式で保存</div>
+                                <div className="text-xs text-gray-500 mt-0.5">印刷・配布用に最適</div>
+                              </div>
+                            </button>
+                            <button onClick={() => { exportJSON(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-t border-gray-100">
+                              <FaIcon name="file-code" className="text-gray-500 w-5 text-center" size={18} />
+                              <div>
+                                <div className="font-bold">JSON形式で保存</div>
+                                <div className="text-xs text-gray-500 mt-0.5">システム連携用データ</div>
+                              </div>
+                            </button>
+                            <div className="bg-gray-50 p-3 border-t border-gray-200">
+                              <button onClick={() => { copyCSVToClipboard(); setIsExportMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-blue-600 bg-white border border-blue-200 hover:bg-blue-50 hover:border-blue-300 rounded-lg flex items-center justify-center gap-2 transition-colors font-bold shadow-sm">
+                                <FaIcon name="copy" /> CSVをクリップボードにコピー
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </header>
 
