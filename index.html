@@ -15,81 +15,71 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     
-    <!-- Babel (ブラウザ上でReactコードを変換するツール。安定版を指定) -->
+    <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
 
     <style>
-        /* デフォルトのフォント設定 */
         body { font-family: sans-serif; }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
-    <!-- data-type="module" と data-presets を明示的に指定して構文エラーを防止 -->
     <script type="text/babel" data-type="module" data-presets="react,env">
-        // Reactの機能をグローバル変数から取得
         const { useState, useRef, useEffect } = React;
         
-        // FontAwesomeアイコンを使いやすくする共通コンポーネント
         const FaIcon = ({ name, size, className = "" }) => {
           const style = size ? { fontSize: `${size}px` } : {};
           return <i className={`fa-solid fa-${name} ${className}`} style={style}></i>;
         };
 
-        // ここからアプリの本体
         function App() {
+          // --- 複数ファイル対応の状態管理 ---
+          const [imageFiles, setImageFiles] = useState([]);
+          const [currentFileIndex, setCurrentFileIndex] = useState(0);
+          const [extractedDataList, setExtractedDataList] = useState([]);
+          
           const [imageSrc, setImageSrc] = useState(null);
-          const [imageFile, setImageFile] = useState(null);
           const [loading, setLoading] = useState(false);
+          const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
+          const [analyzingIndex, setAnalyzingIndex] = useState(-1);
           const [error, setError] = useState(null);
           
           // UI状態
-          const [viewMode, setViewMode] = useState('split'); // 'split' | 'overlay'
+          const [viewMode, setViewMode] = useState('split');
           const [panelOpacity, setPanelOpacity] = useState(0.8);
           const [panelPos, setPanelPos] = useState({ x: 40, y: 40 });
           const [isDragging, setIsDragging] = useState(false);
           const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
 
-          // リサイズ関連の状態
           const [panelSize, setPanelSize] = useState({ width: 600, height: 500 });
           const [columnWidths, setColumnWidths] = useState({
-            name: 250,
-            quantity: 80,
-            unit: 80,
-            unit_price: 100,
-            price: 120,
-            action: 50
+            name: 250, quantity: 80, unit: 80, unit_price: 100, price: 120, action: 50
           });
           const [resizeState, setResizeState] = useState(null);
 
-          // --- APIキー管理用の状態 ---
+          // APIキー管理
           const [userApiKey, setUserApiKey] = useState("");
           const [showSettings, setShowSettings] = useState(false);
           const [apiKeyInput, setApiKeyInput] = useState("");
 
           const panelRef = useRef(null);
-
-          // 抽出されたデータの初期状態
-          const [extractedData, setExtractedData] = useState({
-            document_type: "",
-            issuer: "",
-            recipient: "",
-            date: "",
-            total_amount: 0,
-            items: []
-          });
-
           const fileInputRef = useRef(null);
 
-          // 初回読み込み時にlocalStorageからAPIキーを取得
+          // デフォルトの空データ構造
+          const defaultData = {
+            document_type: "", issuer: "", recipient: "", date: "", total_amount: 0, items: [], isAnalyzed: false
+          };
+
+          // 現在表示中のデータ（エイリアス）
+          const extractedData = extractedDataList[currentFileIndex] || defaultData;
+
           useEffect(() => {
             const savedKey = localStorage.getItem('gemini_api_key');
             if (savedKey) {
               setUserApiKey(savedKey);
               setApiKeyInput(savedKey);
             } else {
-              // APIキーがない場合は設定画面を開く
               setShowSettings(true);
             }
           }, []);
@@ -106,158 +96,100 @@
           };
 
           useEffect(() => {
-            const handleMouseMove = (e) => {
-              onDrag(e);
-              onResize(e);
-            };
-
-            const handleMouseUp = () => {
-              endDrag();
-              endResize();
-            };
-
+            const handleMouseMove = (e) => { onDrag(e); onResize(e); };
+            const handleMouseUp = () => { endDrag(); endResize(); };
             if (isDragging || resizeState) {
               window.addEventListener('mousemove', handleMouseMove);
               window.addEventListener('mouseup', handleMouseUp);
             }
-
             return () => {
               window.removeEventListener('mousemove', handleMouseMove);
               window.removeEventListener('mouseup', handleMouseUp);
             };
           }, [isDragging, resizeState]);
 
-          // --- ドラッグ制御 ---
+          // --- ドラッグ & リサイズ (省略せず維持) ---
           const startDrag = (e) => {
             if (resizeState) return;
-            // 入力要素をクリックした場合はドラッグを開始しない
             if (e.target.tagName.toLowerCase() === 'input') return;
             setIsDragging(true);
-            setDragOffset({
-              x: e.clientX - panelPos.x,
-              y: e.clientY - panelPos.y
-            });
+            setDragOffset({ x: e.clientX - panelPos.x, y: e.clientY - panelPos.y });
           };
-
           const onDrag = (e) => {
             if (!isDragging) return;
-            setPanelPos({
-              x: e.clientX - dragOffset.x,
-              y: e.clientY - dragOffset.y
-            });
+            setPanelPos({ x: e.clientX - dragOffset.x, y: e.clientY - dragOffset.y });
           };
+          const endDrag = () => setIsDragging(false);
 
-          const endDrag = () => {
-            setIsDragging(false);
-          };
-          // -------------------
-
-          // --- リサイズ制御 ---
           const startResize = (e, target) => {
-            e.stopPropagation();
-            e.preventDefault();
+            e.stopPropagation(); e.preventDefault();
             const startWidth = target.startsWith('panel') ? panelSize.width : columnWidths[target];
             const startHeight = target.startsWith('panel') ? panelSize.height : 0;
-
-            setResizeState({
-              target,
-              startX: e.clientX,
-              startY: e.clientY,
-              startWidth,
-              startHeight
-            });
+            setResizeState({ target, startX: e.clientX, startY: e.clientY, startWidth, startHeight });
           };
-
           const onResize = (e) => {
             if (!resizeState) return;
-
             const { target, startX, startY, startWidth, startHeight } = resizeState;
-            const deltaX = e.clientX - startX;
-            const deltaY = e.clientY - startY;
-
+            const deltaX = e.clientX - startX; const deltaY = e.clientY - startY;
             if (target.startsWith('panel')) {
-              let newWidth = startWidth;
-              let newHeight = startHeight;
-
-              if (target.includes('e')) newWidth = Math.max(300, startWidth + deltaX);
-              if (target.includes('s')) newHeight = Math.max(200, startHeight + deltaY);
-
+              let newWidth = target.includes('e') ? Math.max(300, startWidth + deltaX) : startWidth;
+              let newHeight = target.includes('s') ? Math.max(200, startHeight + deltaY) : startHeight;
               setPanelSize({ width: newWidth, height: newHeight });
             } else {
-              const newWidth = Math.max(50, startWidth + deltaX);
-              setColumnWidths(prev => ({ ...prev, [target]: newWidth }));
+              setColumnWidths(prev => ({ ...prev, [target]: Math.max(50, startWidth + deltaX) }));
             }
           };
+          const endResize = () => setResizeState(null);
+          // ----------------------------------------
 
-          const endResize = () => {
-            setResizeState(null);
-          };
-          // ---------------------
-
+          // --- 複数ファイルアップロードと表示切替 ---
           const handleImageUpload = (e) => {
-            const file = e.target.files[0];
-            if (file) {
-              setImageFile(file);
-              const reader = new FileReader();
-              reader.onloadend = () => {
-                setImageSrc(reader.result);
-                setExtractedData({
-                    document_type: "", issuer: "", recipient: "", date: "", total_amount: 0, items: []
-                });
-                setError(null);
-              };
-              reader.readAsDataURL(file);
+            const files = Array.from(e.target.files);
+            if (files.length > 0) {
+              setImageFiles(files);
+              setExtractedDataList(files.map(() => ({ ...defaultData })));
+              setCurrentFileIndex(0);
+              setError(null);
             }
+            // 同じファイルを再度選べるようにリセット
+            if (fileInputRef.current) fileInputRef.current.value = '';
           };
 
-          const analyzeImage = async () => {
-            if (!userApiKey) {
-              setError("設定からGemini APIキーを入力してください。");
-              setShowSettings(true);
-              return;
+          // インデックスが切り替わったら画像プレビューを更新
+          useEffect(() => {
+            if (imageFiles.length > 0 && imageFiles[currentFileIndex]) {
+              const reader = new FileReader();
+              reader.onloadend = () => setImageSrc(reader.result);
+              reader.readAsDataURL(imageFiles[currentFileIndex]);
+            } else {
+              setImageSrc(null);
             }
+          }, [currentFileIndex, imageFiles]);
 
-            if (!imageSrc) {
-              setError("画像を選択してください。");
-              return;
-            }
-
-            setLoading(true);
-            setError(null);
-
-            const base64Data = imageSrc.split(',')[1];
-            const mimeType = imageFile.type;
-
+          // --- API通信コアロジック ---
+          const analyzeImageCore = async (base64Data, mimeType, apiKey) => {
             const payload = {
-              contents: [
-                {
-                  role: "user",
-                  parts: [
-                    { text: "この書類（見積書、請求書、領収書など）の画像を解析し、記載されている情報を抽出してください。特に明細（品名、数量、単価、金額など）がある場合はすべて抽出してください。" },
-                    { inlineData: { mimeType: mimeType, data: base64Data } }
-                  ]
-                }
-              ],
+              contents: [{
+                role: "user",
+                parts: [
+                  { text: "この書類（見積書、請求書、領収書など）の画像を解析し、記載されている情報を抽出してください。特に明細（品名、数量、単価、金額など）がある場合はすべて抽出してください。" },
+                  { inlineData: { mimeType: mimeType, data: base64Data } }
+                ]
+              }],
               generationConfig: {
                 responseMimeType: "application/json",
                 responseSchema: {
                   type: "OBJECT",
                   properties: {
-                    document_type: { type: "STRING" },
-                    issuer: { type: "STRING" },
-                    recipient: { type: "STRING" },
-                    date: { type: "STRING" },
-                    total_amount: { type: "NUMBER" },
+                    document_type: { type: "STRING" }, issuer: { type: "STRING" }, recipient: { type: "STRING" },
+                    date: { type: "STRING" }, total_amount: { type: "NUMBER" },
                     items: {
                       type: "ARRAY",
                       items: {
                         type: "OBJECT",
                         properties: {
-                          name: { type: "STRING" },
-                          quantity: { type: "NUMBER" },
-                          unit: { type: "STRING" },
-                          unit_price: { type: "NUMBER" },
-                          price: { type: "NUMBER" }
+                          name: { type: "STRING" }, quantity: { type: "NUMBER" }, unit: { type: "STRING" },
+                          unit_price: { type: "NUMBER" }, price: { type: "NUMBER" }
                         }
                       }
                     }
@@ -266,80 +198,156 @@
               }
             };
 
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${userApiKey}`;
-            
-            let retries = 5;
-            let delay = 1000;
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+            let retries = 5; let delay = 1000;
 
             while (retries > 0) {
               try {
-                const response = await fetch(url, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(payload)
-                });
-
+                const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                 if (!response.ok) throw new Error(`APIエラー: ${response.status}`);
-
                 const data = await response.json();
                 const textResult = data.candidates?.[0]?.content?.parts?.[0]?.text;
-                
-                if (textResult) {
-                  const parsedData = JSON.parse(textResult);
-                  setExtractedData({
-                    document_type: parsedData.document_type || "",
-                    issuer: parsedData.issuer || "",
-                    recipient: parsedData.recipient || "",
-                    date: parsedData.date || "",
-                    total_amount: parsedData.total_amount || 0,
-                    items: parsedData.items || []
-                  });
-                  setLoading(false);
-                  return;
-                } else {
-                   throw new Error("データの抽出に失敗しました。");
-                }
+                if (textResult) return JSON.parse(textResult);
+                throw new Error("データの抽出に失敗しました。");
               } catch (err) {
                 retries--;
-                if (retries === 0) {
-                  setError(`解析エラー: ${err.message || '通信に失敗しました。'}`);
-                  setLoading(false);
-                  return;
-                }
+                if (retries === 0) throw err;
                 await new Promise(resolve => setTimeout(resolve, delay));
                 delay *= 2;
               }
             }
           };
 
+          // 1件解析 (現在表示中の画像)
+          const analyzeCurrentImage = async () => {
+            if (!userApiKey) return setShowSettings(true);
+            if (!imageSrc) return;
+
+            setLoading(true); setError(null);
+            
+            try {
+              const base64Data = imageSrc.split(',')[1];
+              const mimeType = imageFiles[currentFileIndex].type;
+              const parsedData = await analyzeImageCore(base64Data, mimeType, userApiKey);
+              
+              setExtractedDataList(prev => {
+                const newList = [...prev];
+                newList[currentFileIndex] = {
+                  document_type: parsedData.document_type || "", issuer: parsedData.issuer || "",
+                  recipient: parsedData.recipient || "", date: parsedData.date || "",
+                  total_amount: parsedData.total_amount || 0, items: parsedData.items || [],
+                  isAnalyzed: true
+                };
+                return newList;
+              });
+            } catch(err) {
+              setError(`解析エラー: ${err.message}`);
+            } finally {
+              setLoading(false);
+            }
+          };
+
+          // ファイルをBase64に変換するヘルパー
+          const readFileAsBase64 = (file) => {
+            return new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result.split(',')[1]);
+              reader.onerror = reject;
+              reader.readAsDataURL(file);
+            });
+          };
+
+          // 全件一括解析 (連続処理)
+          const analyzeAllImages = async () => {
+            if (!userApiKey) return setShowSettings(true);
+            setIsAnalyzingAll(true); setError(null);
+            let errorOccurred = false;
+
+            for (let i = 0; i < imageFiles.length; i++) {
+              if (extractedDataList[i].isAnalyzed) continue; // 解析済みはスキップ
+              
+              setAnalyzingIndex(i);
+              setCurrentFileIndex(i); // 画面も一緒に切り替える
+
+              try {
+                const base64Data = await readFileAsBase64(imageFiles[i]);
+                const mimeType = imageFiles[i].type;
+                const parsedData = await analyzeImageCore(base64Data, mimeType, userApiKey);
+                
+                setExtractedDataList(prev => {
+                  const newList = [...prev];
+                  newList[i] = {
+                    document_type: parsedData.document_type || "", issuer: parsedData.issuer || "",
+                    recipient: parsedData.recipient || "", date: parsedData.date || "",
+                    total_amount: parsedData.total_amount || 0, items: parsedData.items || [],
+                    isAnalyzed: true
+                  };
+                  return newList;
+                });
+                // APIレートリミット対策として2秒待機
+                await new Promise(resolve => setTimeout(resolve, 2000)); 
+              } catch(err) {
+                setError(`[${imageFiles[i].name}] の解析でエラーが発生したため、連続処理を中断しました: ${err.message}`);
+                errorOccurred = true;
+                break; 
+              }
+            }
+            setIsAnalyzingAll(false);
+            setAnalyzingIndex(-1);
+            if (!errorOccurred && imageFiles.length > 0) setCurrentFileIndex(0); // 完了したら先頭に戻る
+          };
+
+          // --- 編集ハンドラ (現在のインデックスのデータを更新) ---
           const handleInputChange = (field, value) => {
-            setExtractedData(prev => ({ ...prev, [field]: value }));
+            setExtractedDataList(prev => {
+              const newList = [...prev];
+              newList[currentFileIndex] = { ...newList[currentFileIndex], [field]: value };
+              return newList;
+            });
           };
 
           const handleItemChange = (index, field, value) => {
-            const newItems = [...extractedData.items];
-            newItems[index] = { ...newItems[index], [field]: value };
-            setExtractedData(prev => ({ ...prev, items: newItems }));
+            setExtractedDataList(prev => {
+              const newList = [...prev];
+              const newItems = [...newList[currentFileIndex].items];
+              newItems[index] = { ...newItems[index], [field]: value };
+              newList[currentFileIndex] = { ...newList[currentFileIndex], items: newItems };
+              return newList;
+            });
           };
 
           const addItem = () => {
-            setExtractedData(prev => ({
-              ...prev,
-              items: [...prev.items, { name: "", quantity: 0, unit: "", unit_price: 0, price: 0 }]
-            }));
+            setExtractedDataList(prev => {
+              const newList = [...prev];
+              const currentItems = newList[currentFileIndex].items || [];
+              newList[currentFileIndex] = {
+                ...newList[currentFileIndex],
+                items: [...currentItems, { name: "", quantity: 0, unit: "", unit_price: 0, price: 0 }]
+              };
+              return newList;
+            });
           };
 
           const removeItem = (index) => {
-            const newItems = [...extractedData.items];
-            newItems.splice(index, 1);
-            setExtractedData(prev => ({ ...prev, items: newItems }));
+            setExtractedDataList(prev => {
+              const newList = [...prev];
+              const newItems = [...newList[currentFileIndex].items];
+              newItems.splice(index, 1);
+              newList[currentFileIndex] = { ...newList[currentFileIndex], items: newItems };
+              return newList;
+            });
           };
 
+          // --- 一括エクスポート機能 ---
           const exportJSON = () => {
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(extractedData, null, 2));
+            const exportData = extractedDataList.map((data, index) => {
+              const { isAnalyzed, ...rest } = data; // 内部フラグを削除
+              return { file_name: imageFiles[index]?.name || `file_${index+1}`, ...rest };
+            });
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
             const downloadAnchorNode = document.createElement('a');
             downloadAnchorNode.setAttribute("href", dataStr);
-            downloadAnchorNode.setAttribute("download", "extracted_document.json");
+            downloadAnchorNode.setAttribute("download", "extracted_documents_all.json");
             document.body.appendChild(downloadAnchorNode);
             downloadAnchorNode.click();
             downloadAnchorNode.remove();
@@ -347,17 +355,39 @@
 
           const exportCSV = () => {
             const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-            let csvContent = "書類種別,発行日,宛先,発行元,合計金額\n";
-            csvContent += `"${extractedData.document_type || ''}","${extractedData.date || ''}","${extractedData.recipient || ''}","${extractedData.issuer || ''}",${extractedData.total_amount || 0}\n\n`;
-            csvContent += "品名,数量,単位,単価,金額\n";
-            extractedData.items.forEach(item => {
-              csvContent += `"${item.name || ''}",${item.quantity || 0},"${item.unit || ''}",${item.unit_price || 0},${item.price || 0}\n`;
+            // 全ファイルを1つのデータベースのようなフラット形式にする
+            let csvContent = "ファイル名,書類種別,発行日,宛先,発行元,合計金額,品名,数量,単位,単価,金額\n";
+            
+            extractedDataList.forEach((data, index) => {
+              const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
+              
+              // CSVエスケープ処理 (ダブルクォートをエスケープ)
+              const escapeCSV = (str) => String(str || '').replace(/"/g, '""');
+              
+              const docType = escapeCSV(data.document_type);
+              const date = escapeCSV(data.date);
+              const recipient = escapeCSV(data.recipient);
+              const issuer = escapeCSV(data.issuer);
+              const total = data.total_amount || 0;
+
+              const baseRow = `"${fileName}","${docType}","${date}","${recipient}","${issuer}",${total}`;
+              
+              if (data.items && data.items.length > 0) {
+                data.items.forEach(item => {
+                  const name = escapeCSV(item.name);
+                  const unit = escapeCSV(item.unit);
+                  csvContent += `${baseRow},"${name}",${item.quantity || 0},"${unit}",${item.unit_price || 0},${item.price || 0}\n`;
+                });
+              } else {
+                csvContent += `${baseRow},"","",0,"",0,0\n`;
+              }
             });
+
             const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const downloadAnchorNode = document.createElement('a');
             downloadAnchorNode.setAttribute("href", url);
-            downloadAnchorNode.setAttribute("download", "extracted_document.csv");
+            downloadAnchorNode.setAttribute("download", "extracted_documents_all.csv");
             document.body.appendChild(downloadAnchorNode);
             downloadAnchorNode.click();
             downloadAnchorNode.remove();
@@ -387,6 +417,13 @@
 
             return (
               <div className={`p-4 md:p-6 space-y-6 ${isOverlay ? '' : 'overflow-y-auto flex-grow'}`}>
+                {/* 処理状態のバッジ表示 */}
+                {extractedData.isAnalyzed && (
+                   <div className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-800 text-xs font-bold rounded">
+                     <FaIcon name="check-circle" /> AI解析完了
+                   </div>
+                )}
+                
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className={labelClass}>書類種別</label>
@@ -495,11 +532,11 @@
                       <FaIcon name="gear" size={16} /> API設定
                     </button>
 
-                    <button onClick={exportJSON} disabled={!extractedData.issuer && extractedData.items.length === 0} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">
-                      <FaIcon name="file-code" size={16} /> JSON
+                    <button onClick={exportJSON} disabled={imageFiles.length === 0} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+                      <FaIcon name="file-code" size={16} /> 全件JSON
                     </button>
-                    <button onClick={exportCSV} disabled={!extractedData.issuer && extractedData.items.length === 0} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50">
-                      <FaIcon name="download" size={16} /> CSV
+                    <button onClick={exportCSV} disabled={imageFiles.length === 0} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 font-bold shadow-sm">
+                      <FaIcon name="download" size={16} /> 全件CSV
                     </button>
                   </div>
                 </header>
@@ -510,18 +547,52 @@
                   </div>
                 )}
 
-                {/* コントロールバー（画像選択・解析） */}
+                {/* コントロールバー（複数ファイル対応） */}
                 <div className="mb-6 bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-wrap justify-between items-center gap-4">
-                  <div className="flex items-center gap-4">
-                    <input type="file" accept="image/*" onChange={handleImageUpload} ref={fileInputRef} className="hidden" />
-                    <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-4 py-2 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 transition-colors font-medium">
-                      <FaIcon name="upload" size={16} /> {imageFile ? imageFile.name : '画像を選択'}
+                  <div className="flex flex-wrap items-center gap-4">
+                    <input type="file" multiple accept="image/*" onChange={handleImageUpload} ref={fileInputRef} className="hidden" />
+                    <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-4 py-2 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 transition-colors font-medium text-gray-700">
+                      <FaIcon name="upload" size={16} /> {imageFiles.length > 0 ? `${imageFiles.length}枚の画像を選択中` : '画像を選択(複数可)'}
                     </button>
+
+                    {/* ファイルナビゲーション */}
+                    {imageFiles.length > 0 && (
+                      <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 p-1.5 rounded-lg">
+                        <button 
+                          disabled={currentFileIndex === 0 || isAnalyzingAll} 
+                          onClick={() => setCurrentFileIndex(i => i - 1)} 
+                          className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-200 rounded disabled:opacity-30 disabled:hover:bg-transparent"
+                        ><FaIcon name="chevron-left" /></button>
+                        
+                        <div className="text-sm font-medium w-32 text-center flex flex-col items-center">
+                          <span className="text-gray-700">{currentFileIndex + 1} / {imageFiles.length}</span>
+                          <span className="text-xs text-gray-400 truncate w-full" title={imageFiles[currentFileIndex].name}>
+                            {imageFiles[currentFileIndex].name}
+                          </span>
+                        </div>
+                        
+                        <button 
+                          disabled={currentFileIndex === imageFiles.length - 1 || isAnalyzingAll} 
+                          onClick={() => setCurrentFileIndex(i => i + 1)} 
+                          className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-200 rounded disabled:opacity-30 disabled:hover:bg-transparent"
+                        ><FaIcon name="chevron-right" /></button>
+                      </div>
+                    )}
                   </div>
-                  <button onClick={analyzeImage} disabled={!imageSrc || loading || !userApiKey} className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-bold transition-colors shadow-sm">
-                    {loading ? <FaIcon name="spinner" size={16} className="fa-spin" /> : <FaIcon name="play" size={16} />}
-                    {loading ? '解析中...' : '文字起こし実行'}
-                  </button>
+
+                  {/* 解析アクションボタン */}
+                  <div className="flex gap-2">
+                    <button onClick={analyzeCurrentImage} disabled={!imageSrc || loading || isAnalyzingAll || !userApiKey} className="flex items-center gap-2 px-4 py-2 bg-white border border-blue-600 text-blue-600 rounded-md hover:bg-blue-50 disabled:opacity-50 font-bold transition-colors">
+                      {loading && !isAnalyzingAll ? <FaIcon name="spinner" size={16} className="fa-spin" /> : <FaIcon name="play" size={16} />}
+                      表示中を処理
+                    </button>
+                    {imageFiles.length > 1 && (
+                      <button onClick={analyzeAllImages} disabled={!imageSrc || loading || isAnalyzingAll || !userApiKey} className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-80 font-bold transition-colors shadow-sm">
+                        {isAnalyzingAll ? <FaIcon name="spinner" size={16} className="fa-spin" /> : <FaIcon name="forward-fast" size={16} />}
+                        {isAnalyzingAll ? `全件処理中(${analyzingIndex + 1}/${imageFiles.length})` : '未処理をすべて実行'}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* APIキー設定モーダル */}
@@ -585,10 +656,7 @@
                   </div>
                 ) : (
                   /* --- 透過オーバーレイビュー --- */
-                  <div 
-                    className="relative w-full h-[calc(100vh-16rem)] min-h-[700px] border border-gray-300 rounded-xl overflow-hidden bg-gray-200 shadow-inner"
-                  >
-                    {/* 背面の画像コンテナ（スクロール可能） */}
+                  <div className="relative w-full h-[calc(100vh-16rem)] min-h-[700px] border border-gray-300 rounded-xl overflow-hidden bg-gray-200 shadow-inner">
                     <div className="w-full h-full overflow-auto p-4 md:p-8">
                       {imageSrc ? (
                         <img src={imageSrc} alt="Preview" className="min-w-[800px] w-full h-auto shadow-md" />
@@ -597,45 +665,31 @@
                       )}
                     </div>
 
-                    {/* フローティング編集パネル */}
                     <div 
                       ref={panelRef}
                       style={{ 
-                        left: panelPos.x, 
-                        top: panelPos.y,
-                        width: panelSize.width,
-                        height: panelSize.height,
+                        left: panelPos.x, top: panelPos.y,
+                        width: panelSize.width, height: panelSize.height,
                         backgroundColor: `rgba(255, 255, 255, ${panelOpacity})`,
                         backdropFilter: 'blur(4px)'
                       }}
                       className={`absolute shadow-2xl rounded-xl flex flex-col border border-gray-300/50 transition-opacity ${isDragging ? 'opacity-90' : ''} ${resizeState ? '' : 'transition-all'}`}
                     >
-                      {/* ドラッグハンドル */}
-                      <div 
-                        onMouseDown={startDrag}
-                        className="cursor-move p-3 border-b border-gray-300/30 flex justify-between items-center bg-gray-200/50 rounded-t-xl hover:bg-gray-200/80 transition-colors"
-                      >
+                      <div onMouseDown={startDrag} className="cursor-move p-3 border-b border-gray-300/30 flex justify-between items-center bg-gray-200/50 rounded-t-xl hover:bg-gray-200/80 transition-colors">
                         <div className="flex items-center gap-2 font-bold text-gray-800">
                           <FaIcon name="grip-lines" size={16} className="text-gray-500" />
                           データ編集パネル
                         </div>
                         <div className="flex items-center gap-3 text-sm font-medium bg-white/50 px-3 py-1 rounded-full shadow-sm" onMouseDown={e => e.stopPropagation()}>
                           <span className="text-gray-700">透明度</span>
-                          <input 
-                            type="range" min="0.1" max="1" step="0.05" 
-                            value={panelOpacity} 
-                            onChange={e => setPanelOpacity(parseFloat(e.target.value))}
-                            className="w-24 accent-blue-600"
-                          />
+                          <input type="range" min="0.1" max="1" step="0.05" value={panelOpacity} onChange={e => setPanelOpacity(parseFloat(e.target.value))} className="w-24 accent-blue-600" />
                         </div>
                       </div>
 
-                      {/* フォーム部分 */}
                       <div className="flex-grow overflow-y-auto relative">
                         {renderFormContent(true)}
                       </div>
 
-                      {/* パネルリサイズハンドル */}
                       <div className="absolute right-0 bottom-0 w-4 h-4 cursor-se-resize z-20" onMouseDown={(e) => startResize(e, 'panel-se')} ></div>
                       <div className="absolute right-0 top-0 w-1 h-full cursor-e-resize z-20" onMouseDown={(e) => startResize(e, 'panel-e')} ></div>
                       <div className="absolute left-0 bottom-0 w-full h-1 cursor-s-resize z-20" onMouseDown={(e) => startResize(e, 'panel-s')} ></div>
