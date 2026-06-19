@@ -230,8 +230,8 @@ export default function App() {
       }
     };
 
-    // ユーザーが入力したAPIキーを使用する
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${userApiKey}`;
+    // ユーザーが入力したAPIキーを使用し、標準のgemini-2.5-flashモデルを指定
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${userApiKey}`;
     
     let retries = 5;
     let delay = 1000;
