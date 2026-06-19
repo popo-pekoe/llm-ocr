@@ -1,8 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, FileJson, FileSpreadsheet, Play, AlertCircle, Loader2, Image as ImageIcon, Plus, Trash2, Download, Layers, Columns, GripHorizontal } from 'lucide-react';
-
-// 実行環境で提供されるAPIキー
-const apiKey = ""; 
+import { Upload, FileJson, FileSpreadsheet, Play, AlertCircle, Loader2, Image as ImageIcon, Plus, Trash2, Download, Layers, Columns, GripHorizontal, Settings, Key, X } from 'lucide-react';
 
 export default function App() {
   const [imageSrc, setImageSrc] = useState(null);
@@ -27,7 +24,12 @@ export default function App() {
     price: 120,
     action: 50
   });
-  const [resizeState, setResizeState] = useState(null); // { target, startX, startY, startWidth, startHeight }
+  const [resizeState, setResizeState] = useState(null);
+
+  // --- APIキー管理用の状態 ---
+  const [userApiKey, setUserApiKey] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState("");
 
   const panelRef = useRef(null);
 
@@ -42,6 +44,29 @@ export default function App() {
   });
 
   const fileInputRef = useRef(null);
+
+  // 初回読み込み時にlocalStorageからAPIキーを取得
+  useEffect(() => {
+    const savedKey = localStorage.getItem('gemini_api_key');
+    if (savedKey) {
+      setUserApiKey(savedKey);
+      setApiKeyInput(savedKey);
+    } else {
+      // APIキーがない場合は設定画面を開く
+      setShowSettings(true);
+    }
+  }, []);
+
+  const saveApiKey = () => {
+    if (apiKeyInput.trim() === "") {
+      localStorage.removeItem('gemini_api_key');
+      setUserApiKey("");
+    } else {
+      localStorage.setItem('gemini_api_key', apiKeyInput.trim());
+      setUserApiKey(apiKeyInput.trim());
+    }
+    setShowSettings(false);
+  };
 
   useEffect(() => {
     const handleMouseMove = (e) => {
@@ -150,6 +175,12 @@ export default function App() {
   };
 
   const analyzeImage = async () => {
+    if (!userApiKey) {
+      setError("設定からGemini APIキーを入力してください。");
+      setShowSettings(true);
+      return;
+    }
+
     if (!imageSrc) {
       setError("画像を選択してください。");
       return;
@@ -199,7 +230,8 @@ export default function App() {
       }
     };
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+    // ユーザーが入力したAPIキーを使用する
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${userApiKey}`;
     
     let retries = 5;
     let delay = 1000;
@@ -427,6 +459,10 @@ export default function App() {
             
             <div className="h-6 w-px bg-gray-300"></div>
 
+            <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors text-gray-700">
+              <Settings size={16} /> API設定
+            </button>
+
             <button onClick={exportJSON} disabled={!extractedData.issuer && extractedData.items.length === 0} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">
               <FileJson size={16} /> JSON
             </button>
@@ -450,11 +486,51 @@ export default function App() {
               <Upload size={18} /> {imageFile ? imageFile.name : '画像を選択'}
             </button>
           </div>
-          <button onClick={analyzeImage} disabled={!imageSrc || loading} className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-bold transition-colors shadow-sm">
+          <button onClick={analyzeImage} disabled={!imageSrc || loading || !userApiKey} className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-bold transition-colors shadow-sm">
             {loading ? <Loader2 size={18} className="animate-spin" /> : <Play size={18} />}
             {loading ? '解析中...' : '文字起こし実行'}
           </button>
         </div>
+
+        {/* APIキー設定モーダル */}
+        {showSettings && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+              <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                  <Key className="text-blue-600" />
+                  Gemini API設定
+                </h2>
+                <button onClick={() => setShowSettings(false)} className="text-gray-500 hover:text-gray-700">
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="p-6">
+                <p className="text-sm text-gray-600 mb-4">
+                  このアプリを使用するには、Google AI Studioで取得したAPIキーが必要です。キーはブラウザにのみ保存され、外部のサーバーには送信されません。
+                </p>
+                <div className="mb-4">
+                  <label className="block text-sm font-bold text-gray-700 mb-2">APIキー</label>
+                  <input
+                    type="password"
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    placeholder="AIzaSy..."
+                    className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  />
+                </div>
+                <div className="flex justify-end gap-2 mt-6">
+                  <button onClick={() => setShowSettings(false)} className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">
+                    キャンセル
+                  </button>
+                  <button onClick={saveApiKey} className="px-4 py-2 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700">
+                    保存して閉じる
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* メインビューエリア */}
         {viewMode === 'split' ? (
