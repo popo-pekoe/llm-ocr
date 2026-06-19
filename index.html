@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Upload, FileJson, FileSpreadsheet, Play, AlertCircle, Loader2, Image as ImageIcon, Plus, Trash2, Download, Layers, Columns, GripHorizontal } from 'lucide-react';
 
 // 実行環境で提供されるAPIキー
@@ -17,6 +17,20 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
 
+  // リサイズ関連の状態
+  const [panelSize, setPanelSize] = useState({ width: 600, height: 500 });
+  const [columnWidths, setColumnWidths] = useState({
+    name: 250,
+    quantity: 80,
+    unit: 80,
+    unit_price: 100,
+    price: 120,
+    action: 50
+  });
+  const [resizeState, setResizeState] = useState(null); // { target, startX, startY, startWidth, startHeight }
+
+  const panelRef = useRef(null);
+
   // 抽出されたデータの初期状態
   const [extractedData, setExtractedData] = useState({
     document_type: "",
@@ -29,8 +43,32 @@ export default function App() {
 
   const fileInputRef = useRef(null);
 
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      onDrag(e);
+      onResize(e);
+    };
+
+    const handleMouseUp = () => {
+      endDrag();
+      endResize();
+    };
+
+    if (isDragging || resizeState) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging, resizeState]);
+
+
   // --- ドラッグ制御 ---
   const startDrag = (e) => {
+    if (resizeState) return;
     // 入力要素をクリックした場合はドラッグを開始しない
     if (e.target.tagName.toLowerCase() === 'input') return;
     setIsDragging(true);
@@ -52,6 +90,48 @@ export default function App() {
     setIsDragging(false);
   };
   // -------------------
+
+  // --- リサイズ制御 ---
+  const startResize = (e, target) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const startWidth = target.startsWith('panel') ? panelSize.width : columnWidths[target];
+    const startHeight = target.startsWith('panel') ? panelSize.height : 0;
+
+    setResizeState({
+      target,
+      startX: e.clientX,
+      startY: e.clientY,
+      startWidth,
+      startHeight
+    });
+  };
+
+  const onResize = (e) => {
+    if (!resizeState) return;
+
+    const { target, startX, startY, startWidth, startHeight } = resizeState;
+    const deltaX = e.clientX - startX;
+    const deltaY = e.clientY - startY;
+
+    if (target.startsWith('panel')) {
+      let newWidth = startWidth;
+      let newHeight = startHeight;
+
+      if (target.includes('e')) newWidth = Math.max(300, startWidth + deltaX);
+      if (target.includes('s')) newHeight = Math.max(200, startHeight + deltaY);
+
+      setPanelSize({ width: newWidth, height: newHeight });
+    } else {
+      const newWidth = Math.max(50, startWidth + deltaX);
+      setColumnWidths(prev => ({ ...prev, [target]: newWidth }));
+    }
+  };
+
+  const endResize = () => {
+    setResizeState(null);
+  };
+  // ---------------------
 
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
@@ -217,6 +297,16 @@ export default function App() {
     downloadAnchorNode.remove();
   };
 
+  const renderResizableHeader = (label, colKey) => (
+    <th className="p-2 font-bold relative group" style={{ width: columnWidths[colKey] }}>
+      {label}
+      <div
+        className="absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent group-hover:bg-blue-400/50 transition-colors z-10"
+        onMouseDown={(e) => startResize(e, colKey)}
+      />
+    </th>
+  );
+
   // フォーム部分の共通レンダリング関数
   const renderFormContent = (isOverlay = false) => {
     const inputBase = "w-full p-2 border rounded outline-none transition-colors font-medium ";
@@ -267,15 +357,15 @@ export default function App() {
             </button>
           </div>
           <div className={`overflow-x-auto border rounded-lg ${isOverlay ? 'border-gray-400/50 bg-white/20' : 'border-gray-200'}`}>
-            <table className="w-full text-sm text-left">
+            <table className="w-full text-sm text-left table-fixed">
               <thead className={`border-b ${isOverlay ? 'border-gray-400/50 text-gray-900 bg-white/40' : 'bg-gray-50 border-gray-200 text-gray-600'}`}>
                 <tr>
-                  <th className="p-2 font-bold w-1/3">品名</th>
-                  <th className="p-2 font-bold w-20">数量</th>
-                  <th className="p-2 font-bold w-20">単位</th>
-                  <th className="p-2 font-bold w-24">単価</th>
-                  <th className="p-2 font-bold w-28">金額</th>
-                  <th className="p-2 w-10 text-center"></th>
+                  {renderResizableHeader('品名', 'name')}
+                  {renderResizableHeader('数量', 'quantity')}
+                  {renderResizableHeader('単位', 'unit')}
+                  {renderResizableHeader('単価', 'unit_price')}
+                  {renderResizableHeader('金額', 'price')}
+                  <th className="p-2 w-10 text-center" style={{ width: columnWidths.action }}></th>
                 </tr>
               </thead>
               <tbody className={`divide-y ${isOverlay ? 'divide-gray-400/30' : 'divide-gray-100'}`}>
@@ -305,7 +395,11 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-800 font-sans p-4 md:p-8">
+    <div className="min-h-screen bg-gray-50 text-gray-800 font-sans p-4 md:p-8"
+      onMouseMove={resizeState ? onResize : null}
+      onMouseUp={resizeState ? endResize : null}
+      onMouseLeave={resizeState ? endResize : null}
+    >
       <div className="max-w-7xl mx-auto">
         <header className="mb-6 flex flex-col md:flex-row justify-between items-center gap-4 border-b border-gray-200 pb-4">
           <div>
@@ -385,9 +479,6 @@ export default function App() {
           /* --- 透過オーバーレイビュー --- */
           <div 
             className="relative w-full h-[calc(100vh-16rem)] min-h-[700px] border border-gray-300 rounded-xl overflow-hidden bg-gray-200 shadow-inner"
-            onMouseMove={onDrag}
-            onMouseUp={endDrag}
-            onMouseLeave={endDrag}
           >
             {/* 背面の画像コンテナ（スクロール可能） */}
             <div className="w-full h-full overflow-auto p-4 md:p-8">
@@ -400,13 +491,16 @@ export default function App() {
 
             {/* フローティング編集パネル */}
             <div 
+              ref={panelRef}
               style={{ 
                 left: panelPos.x, 
-                top: panelPos.y, 
+                top: panelPos.y,
+                width: panelSize.width,
+                height: panelSize.height,
                 backgroundColor: `rgba(255, 255, 255, ${panelOpacity})`,
                 backdropFilter: 'blur(4px)'
               }}
-              className={`absolute w-[600px] max-h-[90%] shadow-2xl rounded-xl flex flex-col border border-gray-300/50 transition-opacity ${isDragging ? 'opacity-90 cursor-move' : ''}`}
+              className={`absolute shadow-2xl rounded-xl flex flex-col border border-gray-300/50 transition-opacity ${isDragging ? 'opacity-90' : ''} ${resizeState ? '' : 'transition-all'}`}
             >
               {/* ドラッグハンドル */}
               <div 
@@ -429,9 +523,14 @@ export default function App() {
               </div>
 
               {/* フォーム部分 */}
-              <div className="flex-grow overflow-y-auto">
+              <div className="flex-grow overflow-y-auto relative">
                 {renderFormContent(true)}
               </div>
+
+              {/* パネルリサイズハンドル */}
+              <div className="absolute right-0 bottom-0 w-4 h-4 cursor-se-resize z-20" onMouseDown={(e) => startResize(e, 'panel-se')} />
+              <div className="absolute right-0 top-0 w-1 h-full cursor-e-resize z-20" onMouseDown={(e) => startResize(e, 'panel-e')} />
+              <div className="absolute left-0 bottom-0 w-full h-1 cursor-s-resize z-20" onMouseDown={(e) => startResize(e, 'panel-s')} />
             </div>
           </div>
         )}
