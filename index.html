@@ -251,7 +251,7 @@
               contents: [{
                 role: "user",
                 parts: [
-                  { text: "この書類（見積書、請求書、領収書など）の画像を解析し、記載されている情報を抽出してください。特に明細（品名、数量、単価、金額など）がある場合はすべて抽出してください。" },
+                  { text: "この書類（見積書、請求書、領収書など）の画像を解析し、記載されている情報を抽出してください。特に明細（品名、数量、単価、金額など）がある場合はすべて抽出してください。\n※重要：金額や数量が記載されていない『区分け』や『見出し』の行（例：「◆解体」「1, 1F和室」など）も絶対に省略せず、そのまま『品名(name)』に入れて1つの明細行として抽出してください。その場合、数量や単価、金額などの数値項目は 0 としてください。" },
                   { inlineData: { mimeType: mimeType, data: base64Data } }
                 ]
               }],
@@ -447,6 +447,36 @@
             return { bom, csvContent };
           };
 
+          // クリップボード用のTSV(タブ区切り)生成関数
+          const generateTSVContent = () => {
+            let tsvContent = "ファイル名\t書類種別\t発行日\t宛先\t発行元\t合計金額\t品名\t数量\t単位\t単価\t金額\n";
+            
+            extractedDataList.forEach((data, index) => {
+              const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
+              // タブや改行がデータに含まれると列がズレるためスペースに置換
+              const escapeTSV = (str) => String(str || '').replace(/\t/g, ' ').replace(/\n/g, ' ');
+              
+              const docType = escapeTSV(data.document_type);
+              const date = escapeTSV(data.date);
+              const recipient = escapeTSV(data.recipient);
+              const issuer = escapeTSV(data.issuer);
+              const total = data.total_amount || 0;
+
+              const baseRow = `${fileName}\t${docType}\t${date}\t${recipient}\t${issuer}\t${total}`;
+              
+              if (data.items && data.items.length > 0) {
+                data.items.forEach(item => {
+                  const name = escapeTSV(item.name);
+                  const unit = escapeTSV(item.unit);
+                  tsvContent += `${baseRow}\t${name}\t${item.quantity || 0}\t${unit}\t${item.unit_price || 0}\t${item.price || 0}\n`;
+                });
+              } else {
+                tsvContent += `${baseRow}\t\t0\t\t0\t0\n`;
+              }
+            });
+            return tsvContent;
+          };
+
           // --- 一括エクスポート機能 ---
           const exportJSON = () => {
             const exportData = extractedDataList.map((data, index) => {
@@ -577,17 +607,17 @@
             printWindow.document.close();
           };
 
-          const copyCSVToClipboard = () => {
-            const { csvContent } = generateCSVContent();
+          const copyTSVToClipboard = () => {
+            const tsvContent = generateTSVContent();
             try {
               const textArea = document.createElement("textarea");
-              textArea.value = csvContent;
+              textArea.value = tsvContent;
               document.body.appendChild(textArea);
               textArea.select();
               document.execCommand("copy");
               textArea.remove();
               
-              setToastMessage("CSV形式でクリップボードにコピーしました");
+              setToastMessage("TSV形式でコピーしました（Excelにそのまま貼り付け可能です）");
               setTimeout(() => setToastMessage(null), 3000);
             } catch (err) {
               setError("クリップボードへのコピーに失敗しました。");
@@ -721,7 +751,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.08</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.09</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -766,7 +796,7 @@
                               <FaIcon name="file-csv" className="text-gray-500 w-5 text-center" size={18} />
                               <div>
                                 <div className="font-bold">CSV形式で保存</div>
-                                <div className="text-xs text-gray-500 mt-0.5">表計算ソフトで編集可能</div>
+                                <div className="text-xs text-gray-500 mt-0.5">システム連携などに利用</div>
                               </div>
                             </button>
                             <button onClick={() => { exportExcel(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-t border-gray-100">
@@ -787,12 +817,12 @@
                               <FaIcon name="file-code" className="text-gray-500 w-5 text-center" size={18} />
                               <div>
                                 <div className="font-bold">JSON形式で保存</div>
-                                <div className="text-xs text-gray-500 mt-0.5">システム連携用データ</div>
+                                <div className="text-xs text-gray-500 mt-0.5">開発用フォーマット</div>
                               </div>
                             </button>
                             <div className="bg-gray-50 p-3 border-t border-gray-200">
-                              <button onClick={() => { copyCSVToClipboard(); setIsExportMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-blue-600 bg-white border border-blue-200 hover:bg-blue-50 hover:border-blue-300 rounded-lg flex items-center justify-center gap-2 transition-colors font-bold shadow-sm">
-                                <FaIcon name="copy" /> CSVをクリップボードにコピー
+                              <button onClick={() => { copyTSVToClipboard(); setIsExportMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-blue-600 bg-white border border-blue-200 hover:bg-blue-50 hover:border-blue-300 rounded-lg flex items-center justify-center gap-2 transition-colors font-bold shadow-sm">
+                                <FaIcon name="copy" /> TSVをコピー (Excel貼付用)
                               </button>
                             </div>
                           </div>
