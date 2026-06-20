@@ -106,16 +106,38 @@
             setShowSettings(false);
           };
 
+          // --- マウス・タッチイベント共通座標取得 ---
+          const getClientPos = (e) => {
+            if (e.touches && e.touches.length > 0) {
+              return { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY };
+            } else if (e.changedTouches && e.changedTouches.length > 0) {
+              return { clientX: e.changedTouches[0].clientX, clientY: e.changedTouches[0].clientY };
+            }
+            return { clientX: e.clientX, clientY: e.clientY };
+          };
+
           useEffect(() => {
-            const handleMouseMove = (e) => { onDrag(e); onResize(e); };
+            const handleMouseMove = (e) => { 
+              // タッチ移動時に画面がスクロールしてしまうのを防ぐ
+              if (e.type === 'touchmove') {
+                e.preventDefault();
+              }
+              onDrag(e); 
+              onResize(e); 
+            };
             const handleMouseUp = () => { endDrag(); endResize(); };
+            
             if (isDragging || resizeState) {
               window.addEventListener('mousemove', handleMouseMove);
               window.addEventListener('mouseup', handleMouseUp);
+              window.addEventListener('touchmove', handleMouseMove, { passive: false });
+              window.addEventListener('touchend', handleMouseUp);
             }
             return () => {
               window.removeEventListener('mousemove', handleMouseMove);
               window.removeEventListener('mouseup', handleMouseUp);
+              window.removeEventListener('touchmove', handleMouseMove);
+              window.removeEventListener('touchend', handleMouseUp);
             };
           }, [isDragging, resizeState]);
 
@@ -137,24 +159,29 @@
             if (resizeState) return;
             if (e.target.tagName.toLowerCase() === 'input') return;
             setIsDragging(true);
-            setDragOffset({ x: e.clientX - panelPos.x, y: e.clientY - panelPos.y });
+            const pos = getClientPos(e);
+            setDragOffset({ x: pos.clientX - panelPos.x, y: pos.clientY - panelPos.y });
           };
           const onDrag = (e) => {
             if (!isDragging) return;
-            setPanelPos({ x: e.clientX - dragOffset.x, y: e.clientY - dragOffset.y });
+            const pos = getClientPos(e);
+            setPanelPos({ x: pos.clientX - dragOffset.x, y: pos.clientY - dragOffset.y });
           };
           const endDrag = () => setIsDragging(false);
 
           const startResize = (e, target) => {
-            e.stopPropagation(); e.preventDefault();
+            e.stopPropagation(); 
+            // e.preventDefault();
             const startWidth = target.startsWith('panel') ? panelSize.width : columnWidths[target];
             const startHeight = target.startsWith('panel') ? panelSize.height : 0;
-            setResizeState({ target, startX: e.clientX, startY: e.clientY, startWidth, startHeight });
+            const pos = getClientPos(e);
+            setResizeState({ target, startX: pos.clientX, startY: pos.clientY, startWidth, startHeight });
           };
           const onResize = (e) => {
             if (!resizeState) return;
             const { target, startX, startY, startWidth, startHeight } = resizeState;
-            const deltaX = e.clientX - startX; const deltaY = e.clientY - startY;
+            const pos = getClientPos(e);
+            const deltaX = pos.clientX - startX; const deltaY = pos.clientY - startY;
             if (target.startsWith('panel')) {
               let newWidth = target.includes('e') ? Math.max(300, startWidth + deltaX) : startWidth;
               let newHeight = target.includes('s') ? Math.max(200, startHeight + deltaY) : startHeight;
@@ -630,6 +657,7 @@
               <div
                 className="absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent group-hover:bg-blue-400/50 transition-colors z-10"
                 onMouseDown={(e) => startResize(e, colKey)}
+                onTouchStart={(e) => startResize(e, colKey)}
               />
             </th>
           );
@@ -751,7 +779,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.09</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.10</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -966,12 +994,20 @@
                       }}
                       className={`absolute shadow-2xl rounded-xl flex flex-col border border-gray-300/50 transition-opacity ${isDragging ? 'opacity-90' : ''} ${resizeState ? '' : 'transition-all'}`}
                     >
-                      <div onMouseDown={startDrag} className="cursor-move p-3 border-b border-gray-300/30 flex justify-between items-center bg-gray-200/50 rounded-t-xl hover:bg-gray-200/80 transition-colors">
+                      <div 
+                        onMouseDown={startDrag} 
+                        onTouchStart={startDrag}
+                        className="cursor-move p-3 border-b border-gray-300/30 flex justify-between items-center bg-gray-200/50 rounded-t-xl hover:bg-gray-200/80 transition-colors"
+                      >
                         <div className="flex items-center gap-2 font-bold text-gray-800">
                           <FaIcon name="grip-lines" size={16} className="text-gray-500" />
                           データ編集パネル
                         </div>
-                        <div className="flex items-center gap-3 text-sm font-medium bg-white/50 px-3 py-1 rounded-full shadow-sm" onMouseDown={e => e.stopPropagation()}>
+                        <div 
+                          className="flex items-center gap-3 text-sm font-medium bg-white/50 px-3 py-1 rounded-full shadow-sm" 
+                          onMouseDown={e => e.stopPropagation()}
+                          onTouchStart={e => e.stopPropagation()}
+                        >
                           <span className="text-gray-700">透明度</span>
                           <input type="range" min="0.1" max="1" step="0.05" value={panelOpacity} onChange={e => setPanelOpacity(parseFloat(e.target.value))} className="w-24 accent-blue-600" />
                         </div>
@@ -981,9 +1017,9 @@
                         {renderFormContent(true)}
                       </div>
 
-                      <div className="absolute right-0 bottom-0 w-4 h-4 cursor-se-resize z-20" onMouseDown={(e) => startResize(e, 'panel-se')} ></div>
-                      <div className="absolute right-0 top-0 w-1 h-full cursor-e-resize z-20" onMouseDown={(e) => startResize(e, 'panel-e')} ></div>
-                      <div className="absolute left-0 bottom-0 w-full h-1 cursor-s-resize z-20" onMouseDown={(e) => startResize(e, 'panel-s')} ></div>
+                      <div className="absolute right-0 bottom-0 w-4 h-4 cursor-se-resize z-20" onMouseDown={(e) => startResize(e, 'panel-se')} onTouchStart={(e) => startResize(e, 'panel-se')} ></div>
+                      <div className="absolute right-0 top-0 w-1 h-full cursor-e-resize z-20" onMouseDown={(e) => startResize(e, 'panel-e')} onTouchStart={(e) => startResize(e, 'panel-e')} ></div>
+                      <div className="absolute left-0 bottom-0 w-full h-1 cursor-s-resize z-20" onMouseDown={(e) => startResize(e, 'panel-s')} onTouchStart={(e) => startResize(e, 'panel-s')} ></div>
                     </div>
                   </div>
                 )}
