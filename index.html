@@ -479,6 +479,50 @@
             });
           };
 
+          // --- 明細行のドラッグ＆ドロップ並び替え ---
+          const dragItemIndex = useRef(null);
+          const dragOverItemIndex = useRef(null);
+
+          const handleRowDragStart = (e, index) => {
+            dragItemIndex.current = index;
+            e.dataTransfer.effectAllowed = 'move';
+            // ドラッグ中の行を少し半透明にして分かりやすくする
+            setTimeout(() => {
+              if (e.target && e.target.classList) e.target.classList.add('opacity-50');
+            }, 0);
+          };
+
+          const handleRowDragEnter = (e, index) => {
+            dragOverItemIndex.current = index;
+          };
+
+          const handleRowDragOver = (e) => {
+            e.preventDefault(); // ドロップを許可するために必須
+          };
+
+          const handleRowDragEnd = (e) => {
+            if (e.target && e.target.classList) e.target.classList.remove('opacity-50');
+            const dragIndex = dragItemIndex.current;
+            const dropIndex = dragOverItemIndex.current;
+            
+            if (dragIndex !== null && dropIndex !== null && dragIndex !== dropIndex) {
+              setExtractedDataList(prev => {
+                const newList = [...prev];
+                const newItems = [...newList[currentFileIndex].items];
+                const draggedItem = newItems[dragIndex];
+                
+                // 元の位置から削除し、新しい位置に挿入する
+                newItems.splice(dragIndex, 1);
+                newItems.splice(dropIndex, 0, draggedItem);
+                
+                newList[currentFileIndex] = { ...newList[currentFileIndex], items: newItems };
+                return newList;
+              });
+            }
+            dragItemIndex.current = null;
+            dragOverItemIndex.current = null;
+          };
+
           const generateCSVContent = () => {
             const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
             let csvContent = "ファイル名,書類種別,発行日,宛先,発行元,工事名,現場住所,合計金額,品名,数量,単位,単価,金額\n";
@@ -761,6 +805,7 @@
                     <table className="w-full text-sm text-left table-fixed">
                       <thead className={`border-b ${isOverlay ? 'border-gray-400/50 text-gray-900 bg-white/40' : 'bg-gray-50 border-gray-200 text-gray-600'}`}>
                         <tr>
+                          <th className="p-1 w-6 text-center"></th> {/* ドラッグハンドル用の空ヘッダ */}
                           {renderResizableHeader('品名', 'name')}
                           {renderResizableHeader('数量', 'quantity')}
                           {renderResizableHeader('単位', 'unit')}
@@ -771,7 +816,25 @@
                       </thead>
                       <tbody className={`divide-y ${isOverlay ? 'divide-gray-400/30' : 'divide-gray-100'}`}>
                         {extractedData.items.map((item, index) => (
-                          <tr key={index} className={isOverlay ? 'hover:bg-white/30' : 'hover:bg-gray-50'}>
+                          <tr 
+                            key={index} 
+                            draggable={true}
+                            onDragStart={(e) => {
+                              // 入力欄内のテキスト選択操作を邪魔しないための処理
+                              if (e.target.tagName.toLowerCase() === 'input') {
+                                e.preventDefault();
+                                return;
+                              }
+                              handleRowDragStart(e, index);
+                            }}
+                            onDragEnter={(e) => handleRowDragEnter(e, index)}
+                            onDragEnd={handleRowDragEnd}
+                            onDragOver={handleRowDragOver}
+                            className={isOverlay ? 'hover:bg-white/30' : 'hover:bg-gray-50'}
+                          >
+                            <td className="p-1 text-center cursor-move text-gray-400 hover:text-gray-600 transition-colors" title="ドラッグして並び替え">
+                              <FaIcon name="grip-vertical" size={14} />
+                            </td>
                             <td className="p-1"><input type="text" value={item.name} onChange={(e) => handleItemChange(index, 'name', e.target.value)} className={tableInputClass} /></td>
                             <td className="p-1"><input type="number" value={item.quantity} onChange={(e) => handleItemChange(index, 'quantity', Number(e.target.value))} className={`${tableInputClass} text-right`} /></td>
                             <td className="p-1"><input type="text" value={item.unit} onChange={(e) => handleItemChange(index, 'unit', e.target.value)} className={`${tableInputClass} text-center`} /></td>
@@ -785,7 +848,7 @@
                           </tr>
                         ))}
                         {extractedData.items.length === 0 && (
-                          <tr><td colSpan="6" className="p-8 text-center text-gray-500 font-bold">明細データがありません</td></tr>
+                          <tr><td colSpan="7" className="p-8 text-center text-gray-500 font-bold">明細データがありません</td></tr>
                         )}
                       </tbody>
                     </table>
@@ -819,7 +882,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.14</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.15</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
