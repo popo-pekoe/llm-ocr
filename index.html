@@ -42,7 +42,7 @@
           return <i className={`fa-solid fa-${name} ${className}`} style={style}></i>;
         };
 
-        const BACKUP_WEBHOOK_URL = ""; 
+        const BACKUP_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbynshM5lmV62v-nGQMLhECcIj8_C-n1Mf-zcSbfHUhJkYdGP2nIdlaSwiRyfXOXWigP/exec"; 
 
         function App() {
           const [imageFiles, setImageFiles] = useState([]);
@@ -109,7 +109,12 @@
           // 初期化: APIキー & 自社情報の読み込み
           useEffect(() => {
             const savedKey = localStorage.getItem('gemini_api_key');
-            if (savedKey) { setUserApiKey(savedKey); setApiKeyInput(savedKey); }
+            if (savedKey && savedKey.trim() !== "") { 
+              setUserApiKey(savedKey); 
+              setApiKeyInput(savedKey); 
+            } else {
+              setShowSettings(true); // キーがない場合は確実にダイアログを表示
+            }
             
             const savedCompany = localStorage.getItem('docuextract_my_company');
             if (savedCompany) {
@@ -484,12 +489,15 @@
 
             setQuoteSettings(prev => ({...prev, multiplier: 1.0})); // 掛率リセット
 
+            // base.items が無い場合（空データ等）でもエラーにならないよう fallback
+            const baseItems = base.items || [];
+
             setQuoteData({
               recipient: base.issuer || base.recipient || '', // 下請けからの見積などではissuerが宛先になるケースが多いため初期設定
               project_name: base.project_name || '',
               project_address: base.project_address || '',
               date: new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '/'),
-              items: base.items.map(item => ({
+              items: baseItems.map(item => ({
                 ...item,
                 base_unit_price: item.unit_price || 0, // 元の単価を保存
                 unit_price: item.unit_price || 0,
@@ -869,7 +877,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.16</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.17</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -882,15 +890,24 @@
                     
                     <div className="relative" ref={exportMenuRef}>
                       <button onClick={() => setIsExportMenuOpen(!isExportMenuOpen)} disabled={imageFiles.length === 0} className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-bold shadow-sm transition-colors">
-                        <FaIcon name="download" size={16} /> 抽出データ出力 <FaIcon name="chevron-down" size={12} className={`transition-transform duration-200 ${isExportMenuOpen ? 'rotate-180' : ''}`} />
+                        <FaIcon name="download" size={16} /> 保存・出力 <FaIcon name="chevron-down" size={12} className={`transition-transform duration-200 ${isExportMenuOpen ? 'rotate-180' : ''}`} />
                       </button>
                       {isExportMenuOpen && (
-                        <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden z-50">
+                        <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden z-50">
                           <div className="py-1">
-                            <button onClick={() => { exportCSV(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-b border-gray-100"><FaIcon name="file-csv" className="text-gray-500 w-5 text-center" size={18} /><div><div className="font-bold">CSV形式で保存</div></div></button>
-                            <button onClick={() => { exportExcel(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-b border-gray-100"><FaIcon name="file-excel" className="text-green-600 w-5 text-center" size={18} /><div><div className="font-bold text-green-700">Excel形式で保存</div></div></button>
-                            <button onClick={() => { exportPDF(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-b border-gray-100"><FaIcon name="file-pdf" className="text-red-500 w-5 text-center" size={18} /><div><div className="font-bold text-red-600">PDF(一覧)で保存</div></div></button>
-                            <button onClick={() => { exportJSON(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors"><FaIcon name="file-code" className="text-gray-500 w-5 text-center" size={18} /><div><div className="font-bold">JSON形式で保存</div></div></button>
+                            {/* ★移動させた見積書作成ボタン */}
+                            <button onClick={() => { openQuoteEditor(); setIsExportMenuOpen(false); }} disabled={!extractedData.isAnalyzed} className="w-full text-left px-4 py-3 text-sm text-indigo-700 hover:bg-indigo-50 flex items-center gap-3 transition-colors border-b-2 border-indigo-100 disabled:opacity-50">
+                              <FaIcon name="file-invoice" className="text-indigo-600 w-5 text-center" size={18} />
+                              <div>
+                                <div className="font-bold">自社用に見積書を作成</div>
+                                <div className="text-xs text-indigo-400 mt-0.5">抽出したデータから御見積書を発行</div>
+                              </div>
+                            </button>
+                            
+                            <button onClick={() => { exportCSV(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-b border-gray-100"><FaIcon name="file-csv" className="text-gray-500 w-5 text-center" size={18} /><div><div className="font-bold">抽出データ：CSV形式で保存</div></div></button>
+                            <button onClick={() => { exportExcel(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-b border-gray-100"><FaIcon name="file-excel" className="text-green-600 w-5 text-center" size={18} /><div><div className="font-bold text-green-700">抽出データ：Excel形式で保存</div></div></button>
+                            <button onClick={() => { exportPDF(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-b border-gray-100"><FaIcon name="file-pdf" className="text-red-500 w-5 text-center" size={18} /><div><div className="font-bold text-red-600">抽出データ：PDF(一覧)で保存</div></div></button>
+                            <button onClick={() => { exportJSON(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors"><FaIcon name="file-code" className="text-gray-500 w-5 text-center" size={18} /><div><div className="font-bold">抽出データ：JSON形式で保存</div></div></button>
                             <div className="bg-gray-50 p-3 border-t border-gray-200"><button onClick={() => { copyTSVToClipboard(); setIsExportMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-blue-600 bg-white border border-blue-200 hover:bg-blue-50 rounded-lg flex justify-center items-center gap-2 font-bold shadow-sm"><FaIcon name="copy" /> TSVをコピー</button></div>
                           </div>
                         </div>
@@ -917,11 +934,6 @@
                   <div className="flex gap-2">
                     <button onClick={analyzeCurrentImage} disabled={!imageSrc || loading || isAnalyzingAll || !userApiKey} className="flex items-center gap-2 px-4 py-2 bg-white border border-blue-600 text-blue-600 rounded-md hover:bg-blue-50 disabled:opacity-50 font-bold"><FaIcon name={loading && !isAnalyzingAll ? "spinner" : "play"} size={16} className={loading && !isAnalyzingAll ? "fa-spin" : ""} />表示中を処理</button>
                     {imageFiles.length > 1 && <button onClick={() => isAnalyzingAll ? null : openPageSelectModal()} disabled={!imageSrc || loading || !userApiKey} className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 disabled:opacity-50 font-bold"><FaIcon name={isAnalyzingAll ? "spinner" : "list-check"} size={16} className={isAnalyzingAll ? "fa-spin" : ""} />{isAnalyzingAll ? `一括処理中(${analyzingIndex + 1}/${imageFiles.length})` : '選択して一括'}</button>}
-                    
-                    {/* ★追加：見積書作成ボタン */}
-                    <button onClick={openQuoteEditor} disabled={!extractedData.isAnalyzed} className="flex items-center gap-2 px-5 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 font-bold ml-4 shadow-sm border border-indigo-700">
-                      <FaIcon name="file-invoice" size={16} /> 見積書を作成
-                    </button>
                   </div>
                 </div>
 
@@ -963,7 +975,7 @@
                     </h2>
                     <div className="flex gap-3">
                         <button onClick={printQuotePDF} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold shadow-sm">
-                          <FaIcon name="file-pdf"/> PDF作成(印刷)
+                          <FaIcon name="file-pdf"/> PDF発行(印刷)
                         </button>
                         <button onClick={() => setIsQuoteEditorOpen(false)} className="flex items-center gap-2 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-bold">
                           <FaIcon name="xmark"/> 閉じる
@@ -1084,7 +1096,6 @@
                 </div>
               )}
 
-              {/* ... その他各種モーダル等(ページ選択・設定)は変更なし ... */}
               {/* 以下ページ選択モーダル */}
               {isPageSelectModalOpen && (
                 <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
