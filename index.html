@@ -44,7 +44,7 @@
         // Google Apps Scriptの公開URL（https://script.google.com/macros/s/.../exec）をここに設定してください。
         // 空文字のままだと送信されません。
         // ==========================================
-        const BACKUP_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxicmPJuVKw-3dViRZarlhh4mmVAxrslWxYPWF62M6VnrE8wfNwfaRo3AfIyK933Uku/exec"; 
+        const BACKUP_WEBHOOK_URL = ""; 
 
         function App() {
           // --- 複数ファイル対応の状態管理 ---
@@ -89,9 +89,11 @@
           const panelRef = useRef(null);
           const fileInputRef = useRef(null);
 
-          // デフォルトの空データ構造
+          // デフォルトの空データ構造 (工事名・現場住所を追加)
           const defaultData = {
-            document_type: "", issuer: "", recipient: "", date: "", total_amount: 0, items: [], isAnalyzed: false
+            document_type: "", issuer: "", recipient: "", date: "", 
+            project_name: "", project_address: "",
+            total_amount: 0, items: [], isAnalyzed: false
           };
 
           const extractedData = extractedDataList[currentFileIndex] || defaultData;
@@ -121,7 +123,6 @@
           useEffect(() => {
             const urls = imageFiles.map(file => URL.createObjectURL(file));
             setThumbnails(urls);
-            // 新しくファイルが読み込まれたら、デフォルトで全て選択状態にする
             setSelectedPages(imageFiles.map(() => true));
             return () => urls.forEach(url => URL.revokeObjectURL(url));
           }, [imageFiles]);
@@ -274,7 +275,7 @@
               contents: [{
                 role: "user",
                 parts: [
-                  { text: "この書類（見積書、請求書、領収書など）の画像を解析し、記載されている情報を抽出してください。特に明細（品名、数量、単価、金額など）がある場合はすべて抽出してください。\n※重要：金額や数量が記載されていない『区分け』や『見出し』の行（例：「◆解体」「1, 1F和室」など）も絶対に省略せず、そのまま『品名(name)』に入れて1つの明細行として抽出してください。その場合、数量や単価、金額などの数値項目は 0 としてください。" },
+                  { text: "この書類（見積書、請求書、領収書など）の画像を解析し、記載されている情報を抽出してください。特に明細（品名、数量、単価、金額など）がある場合はすべて抽出してください。\n※重要：金額や数量が記載されていない『区分け』や『見出し』の行（例：「◆解体」「1, 1F和室」など）も絶対に省略せず、そのまま『品名(name)』に入れて1つの明細行として抽出してください。その場合、数量や単価、金額などの数値項目は 0 としてください。\nまた、記載があれば「工事名（現場名）」と「現場住所」も抽出してください。ない場合は空欄で構いません。" },
                   { inlineData: { mimeType: mimeType, data: base64Data } }
                 ]
               }],
@@ -283,8 +284,13 @@
                 responseSchema: {
                   type: "OBJECT",
                   properties: {
-                    document_type: { type: "STRING" }, issuer: { type: "STRING" }, recipient: { type: "STRING" },
-                    date: { type: "STRING" }, total_amount: { type: "NUMBER" },
+                    document_type: { type: "STRING" }, 
+                    issuer: { type: "STRING" }, 
+                    recipient: { type: "STRING" },
+                    date: { type: "STRING" }, 
+                    project_name: { type: "STRING" },
+                    project_address: { type: "STRING" },
+                    total_amount: { type: "NUMBER" },
                     items: {
                       type: "ARRAY",
                       items: {
@@ -331,11 +337,12 @@
                 issuer: parsedData.issuer || "",
                 recipient: parsedData.recipient || "",
                 date: parsedData.date || "",
+                project_name: parsedData.project_name || "",
+                project_address: parsedData.project_address || "",
                 total_amount: parsedData.total_amount || 0,
                 items: JSON.stringify(parsedData.items || []) // 明細はJSON文字列にしておく
               };
               
-              // CORSエラー（CORS制約）を回避するため、mode: 'no-cors' を指定して非同期で投げっぱなしにする
               fetch(BACKUP_WEBHOOK_URL, {
                 method: 'POST',
                 mode: 'no-cors',
@@ -363,6 +370,7 @@
                 newList[currentFileIndex] = {
                   document_type: parsedData.document_type || "", issuer: parsedData.issuer || "",
                   recipient: parsedData.recipient || "", date: parsedData.date || "",
+                  project_name: parsedData.project_name || "", project_address: parsedData.project_address || "",
                   total_amount: parsedData.total_amount || 0, items: parsedData.items || [],
                   isAnalyzed: true
                 };
@@ -406,6 +414,7 @@
                   newList[i] = {
                     document_type: parsedData.document_type || "", issuer: parsedData.issuer || "",
                     recipient: parsedData.recipient || "", date: parsedData.date || "",
+                    project_name: parsedData.project_name || "", project_address: parsedData.project_address || "",
                     total_amount: parsedData.total_amount || 0, items: parsedData.items || [],
                     isAnalyzed: true
                   };
@@ -472,7 +481,7 @@
 
           const generateCSVContent = () => {
             const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-            let csvContent = "ファイル名,書類種別,発行日,宛先,発行元,合計金額,品名,数量,単位,単価,金額\n";
+            let csvContent = "ファイル名,書類種別,発行日,宛先,発行元,工事名,現場住所,合計金額,品名,数量,単位,単価,金額\n";
             
             extractedDataList.forEach((data, index) => {
               const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
@@ -482,9 +491,11 @@
               const date = escapeCSV(data.date);
               const recipient = escapeCSV(data.recipient);
               const issuer = escapeCSV(data.issuer);
+              const projectName = escapeCSV(data.project_name);
+              const projectAddress = escapeCSV(data.project_address);
               const total = data.total_amount || 0;
 
-              const baseRow = `"${fileName}","${docType}","${date}","${recipient}","${issuer}",${total}`;
+              const baseRow = `"${fileName}","${docType}","${date}","${recipient}","${issuer}","${projectName}","${projectAddress}",${total}`;
               
               if (data.items && data.items.length > 0) {
                 data.items.forEach(item => {
@@ -500,7 +511,7 @@
           };
 
           const generateTSVContent = () => {
-            let tsvContent = "ファイル名\t書類種別\t発行日\t宛先\t発行元\t合計金額\t品名\t数量\t単位\t単価\t金額\n";
+            let tsvContent = "ファイル名\t書類種別\t発行日\t宛先\t発行元\t工事名\t現場住所\t合計金額\t品名\t数量\t単位\t単価\t金額\n";
             
             extractedDataList.forEach((data, index) => {
               const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
@@ -510,9 +521,11 @@
               const date = escapeTSV(data.date);
               const recipient = escapeTSV(data.recipient);
               const issuer = escapeTSV(data.issuer);
+              const projectName = escapeTSV(data.project_name);
+              const projectAddress = escapeTSV(data.project_address);
               const total = data.total_amount || 0;
 
-              const baseRow = `${fileName}\t${docType}\t${date}\t${recipient}\t${issuer}\t${total}`;
+              const baseRow = `${fileName}\t${docType}\t${date}\t${recipient}\t${issuer}\t${projectName}\t${projectAddress}\t${total}`;
               
               if (data.items && data.items.length > 0) {
                 data.items.forEach(item => {
@@ -560,12 +573,12 @@
             }
             
             const aoa = [
-              ["ファイル名", "書類種別", "発行日", "宛先", "発行元", "合計金額", "品名", "数量", "単位", "単価", "金額"]
+              ["ファイル名", "書類種別", "発行日", "宛先", "発行元", "工事名", "現場住所", "合計金額", "品名", "数量", "単位", "単価", "金額"]
             ];
             
             extractedDataList.forEach((data, index) => {
               const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
-              const baseRow = [fileName, data.document_type || "", data.date || "", data.recipient || "", data.issuer || "", data.total_amount || 0];
+              const baseRow = [fileName, data.document_type || "", data.date || "", data.recipient || "", data.issuer || "", data.project_name || "", data.project_address || "", data.total_amount || 0];
               
               if (data.items && data.items.length > 0) {
                 data.items.forEach(item => {
@@ -611,7 +624,7 @@
                 <table>
                   <thead>
                     <tr>
-                      <th>ファイル名</th><th>書類種別</th><th>発行日</th><th>宛先</th><th>発行元</th><th>合計金額</th>
+                      <th>ファイル名</th><th>書類種別</th><th>発行日</th><th>宛先</th><th>発行元</th><th>工事名</th><th>現場住所</th><th>合計金額</th>
                       <th>品名</th><th>数量</th><th>単位</th><th>単価</th><th>金額</th>
                     </tr>
                   </thead>
@@ -624,13 +637,13 @@
               if (data.items && data.items.length > 0) {
                 data.items.forEach(item => {
                   html += `<tr>
-                    <td>${fileName}</td><td>${data.document_type || ''}</td><td>${data.date || ''}</td><td>${data.recipient || ''}</td><td>${data.issuer || ''}</td><td class="text-right">${data.total_amount || 0}</td>
+                    <td>${fileName}</td><td>${data.document_type || ''}</td><td>${data.date || ''}</td><td>${data.recipient || ''}</td><td>${data.issuer || ''}</td><td>${data.project_name || ''}</td><td>${data.project_address || ''}</td><td class="text-right">${data.total_amount || 0}</td>
                     <td>${item.name || ''}</td><td class="text-right">${item.quantity || 0}</td><td>${item.unit || ''}</td><td class="text-right">${item.unit_price || 0}</td><td class="text-right">${item.price || 0}</td>
                   </tr>`;
                 });
               } else {
                 html += `<tr>
-                  <td>${fileName}</td><td>${data.document_type || ''}</td><td>${data.date || ''}</td><td>${data.recipient || ''}</td><td>${data.issuer || ''}</td><td class="text-right">${data.total_amount || 0}</td>
+                  <td>${fileName}</td><td>${data.document_type || ''}</td><td>${data.date || ''}</td><td>${data.recipient || ''}</td><td>${data.issuer || ''}</td><td>${data.project_name || ''}</td><td>${data.project_address || ''}</td><td class="text-right">${data.total_amount || 0}</td>
                   <td></td><td></td><td></td><td></td><td></td>
                 </tr>`;
               }
@@ -720,6 +733,14 @@
                     <label className={labelClass}>発行元</label>
                     <input type="text" value={extractedData.issuer} onChange={(e) => handleInputChange('issuer', e.target.value)} className={textInputClass} placeholder="〇〇株式会社" />
                   </div>
+                  <div>
+                    <label className={labelClass}>工事名・現場名</label>
+                    <input type="text" value={extractedData.project_name} onChange={(e) => handleInputChange('project_name', e.target.value)} className={textInputClass} placeholder="〇〇邸新築工事" />
+                  </div>
+                  <div>
+                    <label className={labelClass}>現場住所</label>
+                    <input type="text" value={extractedData.project_address} onChange={(e) => handleInputChange('project_address', e.target.value)} className={textInputClass} placeholder="東京都〇〇区..." />
+                  </div>
                   <div className="md:col-span-2">
                     <label className={labelClass}>合計金額</label>
                     <div className="relative">
@@ -798,7 +819,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.12</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.13</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
