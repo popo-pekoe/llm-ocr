@@ -50,7 +50,12 @@
           const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
           const [analyzingIndex, setAnalyzingIndex] = useState(-1);
           const [error, setError] = useState(null);
-          const [toastMessage, setToastMessage] = useState(null); // トースト通知用
+          const [toastMessage, setToastMessage] = useState(null);
+          
+          // --- ページ選択機能用の状態管理 ---
+          const [thumbnails, setThumbnails] = useState([]);
+          const [isPageSelectModalOpen, setIsPageSelectModalOpen] = useState(false);
+          const [selectedPages, setSelectedPages] = useState([]);
           
           // UI状態
           const [viewMode, setViewMode] = useState('split');
@@ -82,7 +87,6 @@
             document_type: "", issuer: "", recipient: "", date: "", total_amount: 0, items: [], isAnalyzed: false
           };
 
-          // 現在表示中のデータ（エイリアス）
           const extractedData = extractedDataList[currentFileIndex] || defaultData;
 
           useEffect(() => {
@@ -106,24 +110,25 @@
             setShowSettings(false);
           };
 
-          // --- マウス・タッチイベント共通座標取得 ---
+          // サムネイル画像の生成と管理
+          useEffect(() => {
+            const urls = imageFiles.map(file => URL.createObjectURL(file));
+            setThumbnails(urls);
+            // 新しくファイルが読み込まれたら、デフォルトで全て選択状態にする
+            setSelectedPages(imageFiles.map(() => true));
+            return () => urls.forEach(url => URL.revokeObjectURL(url));
+          }, [imageFiles]);
+
           const getClientPos = (e) => {
-            if (e.touches && e.touches.length > 0) {
-              return { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY };
-            } else if (e.changedTouches && e.changedTouches.length > 0) {
-              return { clientX: e.changedTouches[0].clientX, clientY: e.changedTouches[0].clientY };
-            }
+            if (e.touches && e.touches.length > 0) return { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY };
+            else if (e.changedTouches && e.changedTouches.length > 0) return { clientX: e.changedTouches[0].clientX, clientY: e.changedTouches[0].clientY };
             return { clientX: e.clientX, clientY: e.clientY };
           };
 
           useEffect(() => {
             const handleMouseMove = (e) => { 
-              // タッチ移動時に画面がスクロールしてしまうのを防ぐ
-              if (e.type === 'touchmove') {
-                e.preventDefault();
-              }
-              onDrag(e); 
-              onResize(e); 
+              if (e.type === 'touchmove') e.preventDefault();
+              onDrag(e); onResize(e); 
             };
             const handleMouseUp = () => { endDrag(); endResize(); };
             
@@ -141,7 +146,6 @@
             };
           }, [isDragging, resizeState]);
 
-          // プルダウンメニューの外側クリックで閉じる処理
           useEffect(() => {
             const handleClickOutside = (event) => {
               if (exportMenuRef.current && !exportMenuRef.current.contains(event.target)) {
@@ -149,12 +153,9 @@
               }
             };
             document.addEventListener('mousedown', handleClickOutside);
-            return () => {
-              document.removeEventListener('mousedown', handleClickOutside);
-            };
+            return () => document.removeEventListener('mousedown', handleClickOutside);
           }, []);
 
-          // --- ドラッグ & リサイズ ---
           const startDrag = (e) => {
             if (resizeState) return;
             if (e.target.tagName.toLowerCase() === 'input') return;
@@ -171,7 +172,6 @@
 
           const startResize = (e, target) => {
             e.stopPropagation(); 
-            // e.preventDefault();
             const startWidth = target.startsWith('panel') ? panelSize.width : columnWidths[target];
             const startHeight = target.startsWith('panel') ? panelSize.height : 0;
             const pos = getClientPos(e);
@@ -192,20 +192,16 @@
           };
           const endResize = () => setResizeState(null);
 
-          // --- PDFファイルからの画像変換 ---
           const loadPdfPagesAsImages = async (file) => {
             const pdfjsLib = window['pdfjs-dist/build/pdf'];
             if (!pdfjsLib) throw new Error("PDFライブラリが読み込まれていません");
             
-            // Web Workerの設定
             pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-            
             const arrayBuffer = await file.arrayBuffer();
             const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
             const numPages = pdf.numPages;
             const newFiles = [];
 
-            // LLMが表を正確に読めるよう、scale=2.0の高解像度でレンダリング
             for (let i = 1; i <= numPages; i++) {
               const page = await pdf.getPage(i);
               const viewport = page.getViewport({ scale: 2.0 });
@@ -215,11 +211,8 @@
               canvas.height = viewport.height;
               
               await page.render({ canvasContext: ctx, viewport: viewport }).promise;
-              
-              // JPEG形式でBlobに変換
               const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
               
-              // 複数ページの場合はファイル名にページ番号を付与
               const pageName = numPages > 1 ? `${file.name.replace('.pdf', '')}_P${i}.jpg` : `${file.name.replace('.pdf', '')}.jpg`;
               const newFile = new File([blob], pageName, { type: 'image/jpeg' });
               newFiles.push(newFile);
@@ -227,13 +220,11 @@
             return newFiles;
           };
 
-          // --- ファイルアップロードと表示切替 ---
           const handleImageUpload = async (e) => {
             const files = Array.from(e.target.files);
             if (files.length === 0) return;
 
-            setLoading(true);
-            setError(null);
+            setLoading(true); setError(null);
 
             let processedFiles = [];
             for (const file of files) {
@@ -254,14 +245,13 @@
               setImageFiles(processedFiles);
               setExtractedDataList(processedFiles.map(() => ({ ...defaultData })));
               setCurrentFileIndex(0);
-              setToastMessage(null); // 通知クリア
+              setToastMessage(null);
             }
             
             setLoading(false);
             if (fileInputRef.current) fileInputRef.current.value = '';
           };
 
-          // インデックスが切り替わったら画像プレビューを更新
           useEffect(() => {
             if (imageFiles.length > 0 && imageFiles[currentFileIndex]) {
               const reader = new FileReader();
@@ -272,7 +262,6 @@
             }
           }, [currentFileIndex, imageFiles]);
 
-          // --- API通信コアロジック ---
           const analyzeImageCore = async (base64Data, mimeType, apiKey) => {
             const payload = {
               contents: [{
@@ -324,7 +313,6 @@
             }
           };
 
-          // 1件解析 (現在表示中の画像)
           const analyzeCurrentImage = async () => {
             if (!userApiKey) return setShowSettings(true);
             if (!imageSrc) return;
@@ -353,7 +341,6 @@
             }
           };
 
-          // ファイルをBase64に変換するヘルパー
           const readFileAsBase64 = (file) => {
             return new Promise((resolve, reject) => {
               const reader = new FileReader();
@@ -363,17 +350,25 @@
             });
           };
 
-          // 全件一括解析 (連続処理)
-          const analyzeAllImages = async () => {
+          const openPageSelectModal = () => {
+            // モーダルを開く際、解析済みのページは自動でチェックを外す
+            setSelectedPages(imageFiles.map((_, idx) => !extractedDataList[idx]?.isAnalyzed));
+            setIsPageSelectModalOpen(true);
+          };
+
+          // 選択されたページだけを一括解析
+          const analyzeSelectedImages = async () => {
+            setIsPageSelectModalOpen(false);
             if (!userApiKey) return setShowSettings(true);
             setIsAnalyzingAll(true); setError(null);
             let errorOccurred = false;
 
             for (let i = 0; i < imageFiles.length; i++) {
-              if (extractedDataList[i].isAnalyzed) continue; // 解析済みはスキップ
+              // 選択されていない場合はスキップ（解析済みでも手動でチェックされていれば再処理する）
+              if (!selectedPages[i]) continue; 
               
               setAnalyzingIndex(i);
-              setCurrentFileIndex(i); // 画面も一緒に切り替える
+              setCurrentFileIndex(i);
 
               try {
                 const base64Data = await readFileAsBase64(imageFiles[i]);
@@ -390,7 +385,6 @@
                   };
                   return newList;
                 });
-                // APIレートリミット対策として2秒待機
                 await new Promise(resolve => setTimeout(resolve, 2000)); 
               } catch(err) {
                 setError(`[${imageFiles[i].name}] の解析でエラーが発生したため、連続処理を中断しました: ${err.message}`);
@@ -400,10 +394,13 @@
             }
             setIsAnalyzingAll(false);
             setAnalyzingIndex(-1);
-            if (!errorOccurred && imageFiles.length > 0) setCurrentFileIndex(0); // 完了したら先頭に戻る
+            if (!errorOccurred && imageFiles.length > 0) {
+               // 処理完了後、最初の未処理ページに戻る（なければ先頭）
+               const nextUnanalyzed = extractedDataList.findIndex(d => !d.isAnalyzed);
+               setCurrentFileIndex(nextUnanalyzed !== -1 ? nextUnanalyzed : 0);
+            }
           };
 
-          // --- 編集ハンドラ (現在のインデックスのデータを更新) ---
           const handleInputChange = (field, value) => {
             setExtractedDataList(prev => {
               const newList = [...prev];
@@ -444,7 +441,6 @@
             });
           };
 
-          // --- エクスポート用データ生成共通関数 ---
           const generateCSVContent = () => {
             const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
             let csvContent = "ファイル名,書類種別,発行日,宛先,発行元,合計金額,品名,数量,単位,単価,金額\n";
@@ -474,13 +470,11 @@
             return { bom, csvContent };
           };
 
-          // クリップボード用のTSV(タブ区切り)生成関数
           const generateTSVContent = () => {
             let tsvContent = "ファイル名\t書類種別\t発行日\t宛先\t発行元\t合計金額\t品名\t数量\t単位\t単価\t金額\n";
             
             extractedDataList.forEach((data, index) => {
               const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
-              // タブや改行がデータに含まれると列がズレるためスペースに置換
               const escapeTSV = (str) => String(str || '').replace(/\t/g, ' ').replace(/\n/g, ' ');
               
               const docType = escapeTSV(data.document_type);
@@ -504,10 +498,9 @@
             return tsvContent;
           };
 
-          // --- 一括エクスポート機能 ---
           const exportJSON = () => {
             const exportData = extractedDataList.map((data, index) => {
-              const { isAnalyzed, ...rest } = data; // 内部フラグを削除
+              const { isAnalyzed, ...rest } = data;
               return { file_name: imageFiles[index]?.name || `file_${index+1}`, ...rest };
             });
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
@@ -537,7 +530,6 @@
               return;
             }
             
-            // Excel出力用の二次元配列データを作成
             const aoa = [
               ["ファイル名", "書類種別", "発行日", "宛先", "発行元", "合計金額", "品名", "数量", "単位", "単価", "金額"]
             ];
@@ -662,7 +654,6 @@
             </th>
           );
 
-          // フォームコンテンツの描画
           const renderFormContent = (isOverlay = false) => {
             const inputBase = "w-full p-2 border rounded outline-none transition-colors font-medium ";
             const textInputClass = isOverlay 
@@ -677,7 +668,6 @@
 
             return (
               <div className={`p-4 md:p-6 space-y-6 ${isOverlay ? '' : 'overflow-y-auto flex-grow'}`}>
-                {/* 処理状態のバッジ表示 */}
                 {extractedData.isAnalyzed && (
                    <div className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-800 text-xs font-bold rounded">
                      <FaIcon name="check-circle" /> AI解析完了
@@ -779,7 +769,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.10</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.11</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -805,7 +795,7 @@
                       <FaIcon name="gear" size={16} /> API設定
                     </button>
 
-                    {/* エクスポートメニュー（プルダウン） */}
+                    {/* エクスポートメニュー */}
                     <div className="relative" ref={exportMenuRef}>
                       <button 
                         onClick={() => setIsExportMenuOpen(!isExportMenuOpen)} 
@@ -906,13 +896,96 @@
                       表示中を処理
                     </button>
                     {imageFiles.length > 1 && (
-                      <button onClick={analyzeAllImages} disabled={!imageSrc || loading || isAnalyzingAll || !userApiKey} className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-80 font-bold transition-colors shadow-sm">
-                        {isAnalyzingAll ? <FaIcon name="spinner" size={16} className="fa-spin" /> : <FaIcon name="forward-fast" size={16} />}
-                        {isAnalyzingAll ? `全件処理中(${analyzingIndex + 1}/${imageFiles.length})` : '未処理をすべて実行'}
+                      <button 
+                        onClick={() => isAnalyzingAll ? null : openPageSelectModal()} 
+                        disabled={!imageSrc || loading || !userApiKey} 
+                        className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-80 font-bold transition-colors shadow-sm"
+                      >
+                        {isAnalyzingAll ? <FaIcon name="spinner" size={16} className="fa-spin" /> : <FaIcon name="list-check" size={16} />}
+                        {isAnalyzingAll ? `一括処理中(${analyzingIndex + 1}/${imageFiles.length})` : '選択して一括処理'}
                       </button>
                     )}
                   </div>
                 </div>
+
+                {/* ページ選択モーダル */}
+                {isPageSelectModalOpen && (
+                  <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
+                      <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                        <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                          <FaIcon name="list-check" className="text-blue-600" />
+                          処理するページを選択
+                        </h2>
+                        <button onClick={() => setIsPageSelectModalOpen(false)} className="text-gray-500 hover:text-gray-700">
+                          <FaIcon name="xmark" size={20} />
+                        </button>
+                      </div>
+                      
+                      <div className="p-4 border-b border-gray-100 flex justify-between items-center">
+                        <div className="text-sm font-medium text-gray-700 bg-blue-50 text-blue-800 px-3 py-1 rounded-full">
+                          {selectedPages.filter(Boolean).length} / {imageFiles.length} ページを選択中
+                        </div>
+                        <div className="flex gap-2">
+                           <button onClick={() => setSelectedPages(imageFiles.map(() => true))} className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-3 py-1.5 rounded transition-colors border border-transparent">すべて選択</button>
+                           <button onClick={() => setSelectedPages(imageFiles.map(() => false))} className="text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 px-3 py-1.5 rounded transition-colors border border-transparent">すべて解除</button>
+                        </div>
+                      </div>
+
+                      <div className="flex-grow overflow-y-auto p-4 bg-gray-100">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                          {imageFiles.map((file, index) => {
+                            const isSelected = selectedPages[index];
+                            const isAnalyzed = extractedDataList[index]?.isAnalyzed;
+                            return (
+                              <div 
+                                key={index} 
+                                className={`relative rounded-lg border-2 overflow-hidden cursor-pointer bg-white transition-all hover:shadow-md ${isSelected ? 'border-blue-500 shadow-md' : 'border-transparent opacity-70 hover:opacity-100'}`}
+                                onClick={() => {
+                                  const newSelected = [...selectedPages];
+                                  newSelected[index] = !newSelected[index];
+                                  setSelectedPages(newSelected);
+                                }}
+                              >
+                                <div className="aspect-[3/4] bg-gray-200 w-full relative flex items-center justify-center p-1">
+                                   <img src={thumbnails[index]} className="max-w-full max-h-full object-contain shadow-sm bg-white" />
+                                   {isAnalyzed && (
+                                     <div className="absolute top-1 left-1 bg-green-100 text-green-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-green-200 shadow-sm">
+                                       解析済み
+                                     </div>
+                                   )}
+                                </div>
+                                <div className="p-2 text-xs truncate bg-gray-50 border-t border-gray-100 font-medium" title={file.name}>
+                                  {index + 1}. {file.name}
+                                </div>
+                                
+                                <div className="absolute top-2 right-2 shadow-sm rounded-full bg-white">
+                                  <div className={`w-5 h-5 rounded-full flex items-center justify-center border ${isSelected ? 'bg-blue-500 border-blue-500 text-white' : 'bg-white/80 border-gray-400 text-transparent'}`}>
+                                    <FaIcon name="check" size={12} />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="p-4 border-t border-gray-200 flex justify-end gap-3 bg-gray-50">
+                        <button onClick={() => setIsPageSelectModalOpen(false)} className="px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
+                          キャンセル
+                        </button>
+                        <button 
+                          onClick={analyzeSelectedImages} 
+                          disabled={selectedPages.filter(Boolean).length === 0}
+                          className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-bold shadow-sm"
+                        >
+                          <FaIcon name="play" size={14} />
+                          選択したページを一括処理
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* APIキー設定モーダル */}
                 {showSettings && (
