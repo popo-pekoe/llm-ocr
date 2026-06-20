@@ -14,6 +14,9 @@
     <!-- SheetJS (Excel出力用) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
+    <!-- PDF.js (PDFの画像化用) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
     <!-- React本体 -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -161,18 +164,73 @@
             }
           };
           const endResize = () => setResizeState(null);
-          // ----------------------------------------
 
-          // --- 複数ファイルアップロードと表示切替 ---
-          const handleImageUpload = (e) => {
-            const files = Array.from(e.target.files);
-            if (files.length > 0) {
-              setImageFiles(files);
-              setExtractedDataList(files.map(() => ({ ...defaultData })));
-              setCurrentFileIndex(0);
-              setError(null);
+          // --- PDFファイルからの画像変換 ---
+          const loadPdfPagesAsImages = async (file) => {
+            const pdfjsLib = window['pdfjs-dist/build/pdf'];
+            if (!pdfjsLib) throw new Error("PDFライブラリが読み込まれていません");
+            
+            // Web Workerの設定
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            const numPages = pdf.numPages;
+            const newFiles = [];
+
+            // LLMが表を正確に読めるよう、scale=2.0の高解像度でレンダリング
+            for (let i = 1; i <= numPages; i++) {
+              const page = await pdf.getPage(i);
+              const viewport = page.getViewport({ scale: 2.0 });
+              const canvas = document.createElement('canvas');
+              const ctx = canvas.getContext('2d');
+              canvas.width = viewport.width;
+              canvas.height = viewport.height;
+              
+              await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+              
+              // JPEG形式でBlobに変換
+              const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+              
+              // 複数ページの場合はファイル名にページ番号を付与
+              const pageName = numPages > 1 ? `${file.name.replace('.pdf', '')}_P${i}.jpg` : `${file.name.replace('.pdf', '')}.jpg`;
+              const newFile = new File([blob], pageName, { type: 'image/jpeg' });
+              newFiles.push(newFile);
             }
-            // 同じファイルを再度選べるようにリセット
+            return newFiles;
+          };
+
+          // --- ファイルアップロードと表示切替 ---
+          const handleImageUpload = async (e) => {
+            const files = Array.from(e.target.files);
+            if (files.length === 0) return;
+
+            setLoading(true);
+            setError(null);
+
+            let processedFiles = [];
+            for (const file of files) {
+              if (file.type === 'application/pdf') {
+                try {
+                  setToastMessage(`${file.name} を画像に変換中...`);
+                  const pdfImages = await loadPdfPagesAsImages(file);
+                  processedFiles = processedFiles.concat(pdfImages);
+                } catch (err) {
+                  setError(`PDFの読み込みに失敗しました: ${file.name}`);
+                }
+              } else if (file.type.startsWith('image/')) {
+                processedFiles.push(file);
+              }
+            }
+
+            if (processedFiles.length > 0) {
+              setImageFiles(processedFiles);
+              setExtractedDataList(processedFiles.map(() => ({ ...defaultData })));
+              setCurrentFileIndex(0);
+              setToastMessage(null); // 通知クリア
+            }
+            
+            setLoading(false);
             if (fileInputRef.current) fileInputRef.current.value = '';
           };
 
@@ -447,7 +505,6 @@
           };
 
           const exportPDF = () => {
-            // PDF出力（印刷用ウィンドウを開いて印刷させる方式が日本語フォントの文字化けを防ぐため最適）
             const printWindow = window.open('', '_blank');
             if (!printWindow) {
               setError("ポップアップがブロックされました。PDF出力するにはポップアップを許可してください。");
@@ -508,7 +565,6 @@
                   window.onload = function() {
                     setTimeout(function() { 
                       window.print(); 
-                      // 印刷ダイアログが閉じられたらウィンドウを閉じる（一部ブラウザ用）
                       setTimeout(function() { window.close(); }, 500);
                     }, 500);
                   };
@@ -650,7 +706,11 @@
               {/* トースト通知 */}
               {toastMessage && (
                 <div className="fixed top-6 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-5 py-3 rounded-lg shadow-2xl z-50 flex items-center gap-3 transition-all animate-fade-in-down">
-                  <FaIcon name="circle-check" className="text-green-400" size={20} />
+                  {toastMessage.includes("変換中") ? (
+                    <FaIcon name="spinner" className="fa-spin text-blue-400" size={20} />
+                  ) : (
+                    <FaIcon name="circle-check" className="text-green-400" size={20} />
+                  )}
                   <span className="font-medium">{toastMessage}</span>
                 </div>
               )}
@@ -658,9 +718,10 @@
               <div className="max-w-7xl mx-auto">
                 <header className="mb-6 flex flex-col md:flex-row justify-between items-center gap-4 border-b border-gray-200 pb-4">
                   <div>
-                    <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                    <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.08</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -750,9 +811,9 @@
                 {/* コントロールバー（複数ファイル対応） */}
                 <div className="mb-6 bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-wrap justify-between items-center gap-4">
                   <div className="flex flex-wrap items-center gap-4">
-                    <input type="file" multiple accept="image/*" onChange={handleImageUpload} ref={fileInputRef} className="hidden" />
-                    <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-4 py-2 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 transition-colors font-medium text-gray-700">
-                      <FaIcon name="upload" size={16} /> {imageFiles.length > 0 ? `${imageFiles.length}枚の画像を選択中` : '画像を選択(複数可)'}
+                    <input type="file" multiple accept="image/*,application/pdf" onChange={handleImageUpload} ref={fileInputRef} className="hidden" />
+                    <button onClick={() => fileInputRef.current?.click()} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 transition-colors font-medium text-gray-700 disabled:opacity-50">
+                      <FaIcon name="upload" size={16} /> {imageFiles.length > 0 ? `${imageFiles.length}枚の画像を読込済み` : '画像/PDFを選択(複数可)'}
                     </button>
 
                     {/* ファイルナビゲーション */}
@@ -841,10 +902,10 @@
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[calc(100vh-16rem)] min-h-[600px]">
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col overflow-hidden">
                       <div className="p-3 border-b border-gray-200 bg-gray-50 font-semibold text-gray-700 flex items-center gap-2">
-                        <FaIcon name="image" size={16} /> 元画像
+                        <FaIcon name="image" size={16} /> 元データ
                       </div>
                       <div className="flex-grow p-4 overflow-auto bg-gray-100 flex justify-center">
-                        {imageSrc ? <img src={imageSrc} alt="Preview" className="max-w-full h-auto object-contain" /> : <p className="text-gray-400 mt-10">画像がありません</p>}
+                        {imageSrc ? <img src={imageSrc} alt="Preview" className="max-w-full h-auto object-contain" /> : <p className="text-gray-400 mt-10">ファイルがありません</p>}
                       </div>
                     </div>
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col overflow-hidden">
@@ -861,7 +922,7 @@
                       {imageSrc ? (
                         <img src={imageSrc} alt="Preview" className="min-w-[800px] w-full h-auto shadow-md" />
                       ) : (
-                        <div className="flex justify-center items-center h-full text-gray-400"><p>画像を選択してください</p></div>
+                        <div className="flex justify-center items-center h-full text-gray-400"><p>ファイルを選択してください</p></div>
                       )}
                     </div>
 
