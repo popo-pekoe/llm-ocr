@@ -26,6 +26,9 @@
 
     <style>
         body { font-family: sans-serif; }
+        /* スクロールバー非表示（UI改善用） */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body>
@@ -39,15 +42,9 @@
           return <i className={`fa-solid fa-${name} ${className}`} style={style}></i>;
         };
 
-        // ==========================================
-        // 【管理者用】バックアップ（監査）用 Webhook URL
-        // Google Apps Scriptの公開URL（https://script.google.com/macros/s/.../exec）をここに設定してください。
-        // 空文字のままだと送信されません。
-        // ==========================================
-        const BACKUP_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbynshM5lmV62v-nGQMLhECcIj8_C-n1Mf-zcSbfHUhJkYdGP2nIdlaSwiRyfXOXWigP/exec"; 
+        const BACKUP_WEBHOOK_URL = ""; 
 
         function App() {
-          // --- 複数ファイル対応の状態管理 ---
           const [imageFiles, setImageFiles] = useState([]);
           const [currentFileIndex, setCurrentFileIndex] = useState(0);
           const [extractedDataList, setExtractedDataList] = useState([]);
@@ -59,12 +56,10 @@
           const [error, setError] = useState(null);
           const [toastMessage, setToastMessage] = useState(null);
           
-          // --- ページ選択機能用の状態管理 ---
           const [thumbnails, setThumbnails] = useState([]);
           const [isPageSelectModalOpen, setIsPageSelectModalOpen] = useState(false);
           const [selectedPages, setSelectedPages] = useState([]);
           
-          // UI状態
           const [viewMode, setViewMode] = useState('split');
           const [panelOpacity, setPanelOpacity] = useState(0.8);
           const [panelPos, setPanelPos] = useState({ x: 40, y: 40 });
@@ -77,19 +72,32 @@
           });
           const [resizeState, setResizeState] = useState(null);
 
-          // エクスポートメニュー状態
           const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
           const exportMenuRef = useRef(null);
 
-          // APIキー管理
           const [userApiKey, setUserApiKey] = useState("");
           const [showSettings, setShowSettings] = useState(false);
           const [apiKeyInput, setApiKeyInput] = useState("");
 
+          // ==========================================
+          // 見積書作成エディタ用のステート群
+          // ==========================================
+          const [isQuoteEditorOpen, setIsQuoteEditorOpen] = useState(false);
+          const [quoteSettings, setQuoteSettings] = useState({
+            multiplier: 1.0,
+            roundTarget: 1, // 1:整数, 10:1の位切り上げ, 100:10の位切り上げ, 1000:100の位切り上げ
+          });
+          const [myCompany, setMyCompany] = useState({
+            name: '', zip: '', address: '', tel: '', person: ''
+          });
+          const [quoteData, setQuoteData] = useState({
+            recipient: '', project_name: '', project_address: '', date: '', items: []
+          });
+          // ==========================================
+
           const panelRef = useRef(null);
           const fileInputRef = useRef(null);
 
-          // デフォルトの空データ構造 (工事名・現場住所を追加)
           const defaultData = {
             document_type: "", issuer: "", recipient: "", date: "", 
             project_name: "", project_address: "",
@@ -98,13 +106,14 @@
 
           const extractedData = extractedDataList[currentFileIndex] || defaultData;
 
+          // 初期化: APIキー & 自社情報の読み込み
           useEffect(() => {
             const savedKey = localStorage.getItem('gemini_api_key');
-            if (savedKey) {
-              setUserApiKey(savedKey);
-              setApiKeyInput(savedKey);
-            } else {
-              setShowSettings(true);
+            if (savedKey) { setUserApiKey(savedKey); setApiKeyInput(savedKey); }
+            
+            const savedCompany = localStorage.getItem('docuextract_my_company');
+            if (savedCompany) {
+              try { setMyCompany(JSON.parse(savedCompany)); } catch(e) {}
             }
           }, []);
 
@@ -119,7 +128,15 @@
             setShowSettings(false);
           };
 
-          // サムネイル画像の生成と管理
+          // 自社情報の保存
+          const handleMyCompanyChange = (field, value) => {
+            setMyCompany(prev => {
+              const next = { ...prev, [field]: value };
+              localStorage.setItem('docuextract_my_company', JSON.stringify(next));
+              return next;
+            });
+          };
+
           useEffect(() => {
             const urls = imageFiles.map(file => URL.createObjectURL(file));
             setThumbnails(urls);
@@ -231,7 +248,6 @@
           const handleImageUpload = async (e) => {
             const files = Array.from(e.target.files);
             if (files.length === 0) return;
-
             setLoading(true); setError(null);
 
             let processedFiles = [];
@@ -241,9 +257,7 @@
                   setToastMessage(`${file.name} を画像に変換中...`);
                   const pdfImages = await loadPdfPagesAsImages(file);
                   processedFiles = processedFiles.concat(pdfImages);
-                } catch (err) {
-                  setError(`PDFの読み込みに失敗しました: ${file.name}`);
-                }
+                } catch (err) { setError(`PDFの読み込みに失敗しました: ${file.name}`); }
               } else if (file.type.startsWith('image/')) {
                 processedFiles.push(file);
               }
@@ -255,7 +269,6 @@
               setCurrentFileIndex(0);
               setToastMessage(null);
             }
-            
             setLoading(false);
             if (fileInputRef.current) fileInputRef.current.value = '';
           };
@@ -284,12 +297,8 @@
                 responseSchema: {
                   type: "OBJECT",
                   properties: {
-                    document_type: { type: "STRING" }, 
-                    issuer: { type: "STRING" }, 
-                    recipient: { type: "STRING" },
-                    date: { type: "STRING" }, 
-                    project_name: { type: "STRING" },
-                    project_address: { type: "STRING" },
+                    document_type: { type: "STRING" }, issuer: { type: "STRING" }, recipient: { type: "STRING" },
+                    date: { type: "STRING" }, project_name: { type: "STRING" }, project_address: { type: "STRING" },
                     total_amount: { type: "NUMBER" },
                     items: {
                       type: "ARRAY",
@@ -326,38 +335,23 @@
             }
           };
 
-          // --- 監査バックアップ送信処理 ---
           const sendBackupToSpreadsheet = (fileName, parsedData) => {
-            if (!BACKUP_WEBHOOK_URL) return; // URLが設定されていなければスキップ
+            if (!BACKUP_WEBHOOK_URL) return; 
             try {
               const payload = {
-                timestamp: new Date().toLocaleString('ja-JP'),
-                fileName: fileName,
-                document_type: parsedData.document_type || "",
-                issuer: parsedData.issuer || "",
-                recipient: parsedData.recipient || "",
-                date: parsedData.date || "",
-                project_name: parsedData.project_name || "",
-                project_address: parsedData.project_address || "",
-                total_amount: parsedData.total_amount || 0,
-                items: JSON.stringify(parsedData.items || []) // 明細はJSON文字列にしておく
+                timestamp: new Date().toLocaleString('ja-JP'), fileName: fileName,
+                document_type: parsedData.document_type || "", issuer: parsedData.issuer || "",
+                recipient: parsedData.recipient || "", date: parsedData.date || "",
+                project_name: parsedData.project_name || "", project_address: parsedData.project_address || "",
+                total_amount: parsedData.total_amount || 0, items: JSON.stringify(parsedData.items || []) 
               };
-              
-              fetch(BACKUP_WEBHOOK_URL, {
-                method: 'POST',
-                mode: 'no-cors',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-              });
-            } catch (err) {
-              console.error("バックアップ送信エラー:", err);
-            }
+              fetch(BACKUP_WEBHOOK_URL, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            } catch (err) { console.error("バックアップ送信エラー:", err); }
           };
 
           const analyzeCurrentImage = async () => {
             if (!userApiKey) return setShowSettings(true);
             if (!imageSrc) return;
-
             setLoading(true); setError(null);
             
             try {
@@ -368,23 +362,13 @@
               setExtractedDataList(prev => {
                 const newList = [...prev];
                 newList[currentFileIndex] = {
-                  document_type: parsedData.document_type || "", issuer: parsedData.issuer || "",
-                  recipient: parsedData.recipient || "", date: parsedData.date || "",
-                  project_name: parsedData.project_name || "", project_address: parsedData.project_address || "",
-                  total_amount: parsedData.total_amount || 0, items: parsedData.items || [],
+                  ...parsedData,
                   isAnalyzed: true
                 };
                 return newList;
               });
-
-              // 監査用バックアップを裏側で送信
               sendBackupToSpreadsheet(imageFiles[currentFileIndex].name, parsedData);
-
-            } catch(err) {
-              setError(`解析エラー: ${err.message}`);
-            } finally {
-              setLoading(false);
-            }
+            } catch(err) { setError(`解析エラー: ${err.message}`); } finally { setLoading(false); }
           };
 
           const openPageSelectModal = () => {
@@ -400,9 +384,7 @@
 
             for (let i = 0; i < imageFiles.length; i++) {
               if (!selectedPages[i]) continue; 
-              
-              setAnalyzingIndex(i);
-              setCurrentFileIndex(i);
+              setAnalyzingIndex(i); setCurrentFileIndex(i);
 
               try {
                 const base64Data = await readFileAsBase64(imageFiles[i]);
@@ -411,34 +393,24 @@
                 
                 setExtractedDataList(prev => {
                   const newList = [...prev];
-                  newList[i] = {
-                    document_type: parsedData.document_type || "", issuer: parsedData.issuer || "",
-                    recipient: parsedData.recipient || "", date: parsedData.date || "",
-                    project_name: parsedData.project_name || "", project_address: parsedData.project_address || "",
-                    total_amount: parsedData.total_amount || 0, items: parsedData.items || [],
-                    isAnalyzed: true
-                  };
+                  newList[i] = { ...parsedData, isAnalyzed: true };
                   return newList;
                 });
-
-                // 監査用バックアップを裏側で送信
                 sendBackupToSpreadsheet(imageFiles[i].name, parsedData);
-
                 await new Promise(resolve => setTimeout(resolve, 2000)); 
               } catch(err) {
                 setError(`[${imageFiles[i].name}] の解析でエラーが発生したため、連続処理を中断しました: ${err.message}`);
-                errorOccurred = true;
-                break; 
+                errorOccurred = true; break; 
               }
             }
-            setIsAnalyzingAll(false);
-            setAnalyzingIndex(-1);
+            setIsAnalyzingAll(false); setAnalyzingIndex(-1);
             if (!errorOccurred && imageFiles.length > 0) {
                const nextUnanalyzed = extractedDataList.findIndex(d => !d.isAnalyzed);
                setCurrentFileIndex(nextUnanalyzed !== -1 ? nextUnanalyzed : 0);
             }
           };
 
+          // --- 抽出データの編集ハンドラ ---
           const handleInputChange = (field, value) => {
             setExtractedDataList(prev => {
               const newList = [...prev];
@@ -461,10 +433,7 @@
             setExtractedDataList(prev => {
               const newList = [...prev];
               const currentItems = newList[currentFileIndex].items || [];
-              newList[currentFileIndex] = {
-                ...newList[currentFileIndex],
-                items: [...currentItems, { name: "", quantity: 0, unit: "", unit_price: 0, price: 0 }]
-              };
+              newList[currentFileIndex] = { ...newList[currentFileIndex], items: [...currentItems, { name: "", quantity: 0, unit: "", unit_price: 0, price: 0 }] };
               return newList;
             });
           };
@@ -479,333 +448,379 @@
             });
           };
 
-          // --- 明細行のドラッグ＆ドロップ並び替え ---
           const dragItemIndex = useRef(null);
           const dragOverItemIndex = useRef(null);
 
           const handleRowDragStart = (e, index) => {
             dragItemIndex.current = index;
             e.dataTransfer.effectAllowed = 'move';
-            // ドラッグ中の行を少し半透明にして分かりやすくする
-            setTimeout(() => {
-              if (e.target && e.target.classList) e.target.classList.add('opacity-50');
-            }, 0);
+            setTimeout(() => { if (e.target && e.target.classList) e.target.classList.add('opacity-50'); }, 0);
           };
-
-          const handleRowDragEnter = (e, index) => {
-            dragOverItemIndex.current = index;
-          };
-
-          const handleRowDragOver = (e) => {
-            e.preventDefault(); // ドロップを許可するために必須
-          };
-
+          const handleRowDragEnter = (e, index) => { dragOverItemIndex.current = index; };
+          const handleRowDragOver = (e) => e.preventDefault();
           const handleRowDragEnd = (e) => {
             if (e.target && e.target.classList) e.target.classList.remove('opacity-50');
-            const dragIndex = dragItemIndex.current;
-            const dropIndex = dragOverItemIndex.current;
-            
+            const dragIndex = dragItemIndex.current; const dropIndex = dragOverItemIndex.current;
             if (dragIndex !== null && dropIndex !== null && dragIndex !== dropIndex) {
               setExtractedDataList(prev => {
                 const newList = [...prev];
                 const newItems = [...newList[currentFileIndex].items];
                 const draggedItem = newItems[dragIndex];
-                
-                // 元の位置から削除し、新しい位置に挿入する
                 newItems.splice(dragIndex, 1);
                 newItems.splice(dropIndex, 0, draggedItem);
-                
                 newList[currentFileIndex] = { ...newList[currentFileIndex], items: newItems };
                 return newList;
               });
             }
-            dragItemIndex.current = null;
-            dragOverItemIndex.current = null;
+            dragItemIndex.current = null; dragOverItemIndex.current = null;
           };
 
-          const generateCSVContent = () => {
-            const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-            let csvContent = "ファイル名,書類種別,発行日,宛先,発行元,工事名,現場住所,合計金額,品名,数量,単位,単価,金額\n";
-            
-            extractedDataList.forEach((data, index) => {
-              const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
-              const escapeCSV = (str) => String(str || '').replace(/"/g, '""');
-              
-              const docType = escapeCSV(data.document_type);
-              const date = escapeCSV(data.date);
-              const recipient = escapeCSV(data.recipient);
-              const issuer = escapeCSV(data.issuer);
-              const projectName = escapeCSV(data.project_name);
-              const projectAddress = escapeCSV(data.project_address);
-              const total = data.total_amount || 0;
+          // ==========================================
+          // 見積書作成エディタ機能
+          // ==========================================
+          const openQuoteEditor = () => {
+            const base = extractedDataList[currentFileIndex];
+            if (!base) return;
 
-              const baseRow = `"${fileName}","${docType}","${date}","${recipient}","${issuer}","${projectName}","${projectAddress}",${total}`;
+            setQuoteSettings(prev => ({...prev, multiplier: 1.0})); // 掛率リセット
+
+            setQuoteData({
+              recipient: base.issuer || base.recipient || '', // 下請けからの見積などではissuerが宛先になるケースが多いため初期設定
+              project_name: base.project_name || '',
+              project_address: base.project_address || '',
+              date: new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '/'),
+              items: base.items.map(item => ({
+                ...item,
+                base_unit_price: item.unit_price || 0, // 元の単価を保存
+                unit_price: item.unit_price || 0,
+                price: (item.quantity || 0) * (item.unit_price || 0)
+              }))
+            });
+            setIsQuoteEditorOpen(true);
+          };
+
+          const handleQuoteInputChange = (field, value) => {
+            setQuoteData(prev => ({ ...prev, [field]: value }));
+          };
+
+          const handleQuoteItemChange = (index, field, value) => {
+            setQuoteData(prev => {
+              const newItems = [...prev.items];
+              const updatedItem = { ...newItems[index], [field]: value };
               
-              if (data.items && data.items.length > 0) {
-                data.items.forEach(item => {
-                  const name = escapeCSV(item.name);
-                  const unit = escapeCSV(item.unit);
-                  csvContent += `${baseRow},"${name}",${item.quantity || 0},"${unit}",${item.unit_price || 0},${item.price || 0}\n`;
-                });
-              } else {
-                csvContent += `${baseRow},"","",0,"",0,0\n`;
+              // 数量か単価が手動変更された場合、金額を自動再計算
+              if (field === 'quantity' || field === 'unit_price') {
+                updatedItem.price = (updatedItem.quantity || 0) * (updatedItem.unit_price || 0);
               }
-            });
-            return { bom, csvContent };
-          };
-
-          const generateTSVContent = () => {
-            let tsvContent = "ファイル名\t書類種別\t発行日\t宛先\t発行元\t工事名\t現場住所\t合計金額\t品名\t数量\t単位\t単価\t金額\n";
-            
-            extractedDataList.forEach((data, index) => {
-              const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
-              const escapeTSV = (str) => String(str || '').replace(/\t/g, ' ').replace(/\n/g, ' ');
-              
-              const docType = escapeTSV(data.document_type);
-              const date = escapeTSV(data.date);
-              const recipient = escapeTSV(data.recipient);
-              const issuer = escapeTSV(data.issuer);
-              const projectName = escapeTSV(data.project_name);
-              const projectAddress = escapeTSV(data.project_address);
-              const total = data.total_amount || 0;
-
-              const baseRow = `${fileName}\t${docType}\t${date}\t${recipient}\t${issuer}\t${projectName}\t${projectAddress}\t${total}`;
-              
-              if (data.items && data.items.length > 0) {
-                data.items.forEach(item => {
-                  const name = escapeTSV(item.name);
-                  const unit = escapeTSV(item.unit);
-                  tsvContent += `${baseRow}\t${name}\t${item.quantity || 0}\t${unit}\t${item.unit_price || 0}\t${item.price || 0}\n`;
-                });
-              } else {
-                tsvContent += `${baseRow}\t\t0\t\t0\t0\n`;
+              // 単価を手打ちで変更した場合は、それを新しいベース単価として扱う
+              if (field === 'unit_price') {
+                updatedItem.base_unit_price = value;
               }
+              
+              newItems[index] = updatedItem;
+              return { ...prev, items: newItems };
             });
-            return tsvContent;
           };
 
-          const exportJSON = () => {
-            const exportData = extractedDataList.map((data, index) => {
-              const { isAnalyzed, ...rest } = data;
-              return { file_name: imageFiles[index]?.name || `file_${index+1}`, ...rest };
+          const applyQuoteSettings = () => {
+            setQuoteData(prev => {
+              const newItems = prev.items.map(item => {
+                // 数量も単価も0の行（見出しや注釈など）は計算を除外
+                if (item.quantity === 0 && item.base_unit_price === 0 && item.price === 0) return item;
+
+                let calcPrice = item.base_unit_price * quoteSettings.multiplier;
+                const target = quoteSettings.roundTarget;
+                
+                if (target > 0) {
+                  calcPrice = Math.ceil(calcPrice / target) * target;
+                }
+
+                return {
+                  ...item,
+                  unit_price: calcPrice,
+                  price: calcPrice * (item.quantity || 0)
+                };
+              });
+              return { ...prev, items: newItems };
             });
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
-            const downloadAnchorNode = document.createElement('a');
-            downloadAnchorNode.setAttribute("href", dataStr);
-            downloadAnchorNode.setAttribute("download", "extracted_documents_all.json");
-            document.body.appendChild(downloadAnchorNode);
-            downloadAnchorNode.click();
-            downloadAnchorNode.remove();
+            setToastMessage("単価を再計算し、金額を更新しました。");
+            setTimeout(() => setToastMessage(null), 3000);
           };
 
-          const exportCSV = () => {
-            const { bom, csvContent } = generateCSVContent();
-            const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
-            const url = URL.createObjectURL(blob);
-            const downloadAnchorNode = document.createElement('a');
-            downloadAnchorNode.setAttribute("href", url);
-            downloadAnchorNode.setAttribute("download", "extracted_documents_all.csv");
-            document.body.appendChild(downloadAnchorNode);
-            downloadAnchorNode.click();
-            downloadAnchorNode.remove();
+          const addQuoteItem = () => {
+            setQuoteData(prev => ({
+              ...prev,
+              items: [...prev.items, { name: "", quantity: 0, unit: "", unit_price: 0, base_unit_price: 0, price: 0 }]
+            }));
           };
 
-          const exportExcel = () => {
-            if (typeof XLSX === 'undefined') {
-              setError("Excel生成ライブラリの読み込みに失敗しました。");
-              return;
+          const removeQuoteItem = (index) => {
+            setQuoteData(prev => {
+              const newItems = [...prev.items];
+              newItems.splice(index, 1);
+              return { ...prev, items: newItems };
+            });
+          };
+
+          // エディタ用D&D
+          const dragQuoteItemIndex = useRef(null);
+          const dragOverQuoteItemIndex = useRef(null);
+          const handleQuoteRowDragStart = (e, index) => {
+            dragQuoteItemIndex.current = index; e.dataTransfer.effectAllowed = 'move';
+            setTimeout(() => { if (e.target && e.target.classList) e.target.classList.add('opacity-50'); }, 0);
+          };
+          const handleQuoteRowDragEnter = (e, index) => { dragOverQuoteItemIndex.current = index; };
+          const handleQuoteRowDragEnd = (e) => {
+            if (e.target && e.target.classList) e.target.classList.remove('opacity-50');
+            const dragIndex = dragQuoteItemIndex.current; const dropIndex = dragOverQuoteItemIndex.current;
+            if (dragIndex !== null && dropIndex !== null && dragIndex !== dropIndex) {
+              setQuoteData(prev => {
+                const newItems = [...prev.items];
+                const draggedItem = newItems[dragIndex];
+                newItems.splice(dragIndex, 1);
+                newItems.splice(dropIndex, 0, draggedItem);
+                return { ...prev, items: newItems };
+              });
             }
-            
-            const aoa = [
-              ["ファイル名", "書類種別", "発行日", "宛先", "発行元", "工事名", "現場住所", "合計金額", "品名", "数量", "単位", "単価", "金額"]
-            ];
-            
-            extractedDataList.forEach((data, index) => {
-              const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
-              const baseRow = [fileName, data.document_type || "", data.date || "", data.recipient || "", data.issuer || "", data.project_name || "", data.project_address || "", data.total_amount || 0];
-              
-              if (data.items && data.items.length > 0) {
-                data.items.forEach(item => {
-                  aoa.push([...baseRow, item.name || "", item.quantity || 0, item.unit || "", item.unit_price || 0, item.price || 0]);
-                });
-              } else {
-                aoa.push([...baseRow, "", 0, "", 0, 0]);
-              }
-            });
-
-            const worksheet = XLSX.utils.aoa_to_sheet(aoa);
-            const workbook = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(workbook, worksheet, "抽出データ");
-            XLSX.writeFile(workbook, "extracted_documents_all.xlsx");
+            dragQuoteItemIndex.current = null; dragOverQuoteItemIndex.current = null;
           };
 
-          const exportPDF = () => {
+          const printQuotePDF = () => {
             const printWindow = window.open('', '_blank');
-            if (!printWindow) {
-              setError("ポップアップがブロックされました。PDF出力するにはポップアップを許可してください。");
-              return;
-            }
+            if (!printWindow) { setError("ポップアップがブロックされました。"); return; }
+            
+            const totalAmount = quoteData.items.reduce((sum, item) => sum + (item.price || 0), 0);
             
             let html = `
               <!DOCTYPE html>
               <html lang="ja">
               <head>
                 <meta charset="UTF-8">
-                <title>抽出データ一覧 (PDF用)</title>
+                <title>御見積書</title>
                 <style>
-                  body { font-family: sans-serif; font-size: 11px; padding: 20px; color: #333; }
-                  table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-                  th, td { border: 1px solid #ccc; padding: 6px; text-align: left; }
-                  th { background-color: #f8f9fa; font-weight: bold; }
+                  @page { size: A4 portrait; margin: 15mm; }
+                  body { font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 13px; line-height: 1.6; color: #000; margin: 0; padding: 0; }
+                  .page { max-width: 210mm; margin: 0 auto; background: #fff; padding: 10px 20px; box-sizing: border-box; }
+                  .title { text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 10px; margin-bottom: 30px; }
+                  .header-wrap { display: flex; justify-content: space-between; margin-bottom: 30px; }
+                  .left-col { width: 55%; }
+                  .right-col { width: 40%; text-align: right; }
+                  .recipient { font-size: 20px; border-bottom: 1px solid #000; padding-bottom: 5px; margin-bottom: 15px; display: inline-block; min-width: 80%; }
+                  .info-row { display: flex; margin-bottom: 5px; }
+                  .info-label { width: 80px; color: #555; }
+                  .info-value { flex: 1; }
+                  .total-box { margin-top: 30px; font-size: 22px; font-weight: bold; border-bottom: 3px double #000; display: inline-block; padding: 5px 20px 5px 0; }
+                  .company-name { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
+                  table.items { width: 100%; border-collapse: collapse; margin-top: 30px; border: 1px solid #000;}
+                  table.items th, table.items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 8px; }
+                  table.items th { background-color: #f5f5f5; text-align: center; border-bottom: 1px solid #000; border-top: 1px solid #000; }
+                  table.items tbody tr:last-child td { border-bottom: 1px solid #000; }
                   .text-right { text-align: right; }
-                  @media print {
-                    @page { margin: 15mm; size: landscape; }
-                  }
+                  .text-center { text-align: center; }
                 </style>
               </head>
               <body>
-                <h2>抽出データ一覧</h2>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>ファイル名</th><th>書類種別</th><th>発行日</th><th>宛先</th><th>発行元</th><th>工事名</th><th>現場住所</th><th>合計金額</th>
-                      <th>品名</th><th>数量</th><th>単位</th><th>単価</th><th>金額</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-            `;
-            
-            extractedDataList.forEach((data, index) => {
-              const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
-              
-              if (data.items && data.items.length > 0) {
-                data.items.forEach(item => {
-                  html += `<tr>
-                    <td>${fileName}</td><td>${data.document_type || ''}</td><td>${data.date || ''}</td><td>${data.recipient || ''}</td><td>${data.issuer || ''}</td><td>${data.project_name || ''}</td><td>${data.project_address || ''}</td><td class="text-right">${data.total_amount || 0}</td>
-                    <td>${item.name || ''}</td><td class="text-right">${item.quantity || 0}</td><td>${item.unit || ''}</td><td class="text-right">${item.unit_price || 0}</td><td class="text-right">${item.price || 0}</td>
-                  </tr>`;
-                });
-              } else {
-                html += `<tr>
-                  <td>${fileName}</td><td>${data.document_type || ''}</td><td>${data.date || ''}</td><td>${data.recipient || ''}</td><td>${data.issuer || ''}</td><td>${data.project_name || ''}</td><td>${data.project_address || ''}</td><td class="text-right">${data.total_amount || 0}</td>
-                  <td></td><td></td><td></td><td></td><td></td>
-                </tr>`;
-              }
-            });
+                <div class="page">
+                  <div class="title">御見積書</div>
+                  
+                  <div class="header-wrap">
+                    <div class="left-col">
+                      <div class="recipient">${quoteData.recipient || '　　　　　　　　　　'} 御中</div>
+                      <div>下記の通り御見積申し上げます。</div>
+                      <div class="total-box">御見積金額：¥${totalAmount.toLocaleString()} -</div>
+                      <div style="margin-top: 15px;">
+                        <div class="info-row"><div class="info-label">工事名：</div><div class="info-value">${quoteData.project_name || ''}</div></div>
+                        <div class="info-row"><div class="info-label">現場住所：</div><div class="info-value">${quoteData.project_address || ''}</div></div>
+                      </div>
+                    </div>
+                    <div class="right-col">
+                      <div style="margin-bottom: 15px;">発行日：${quoteData.date || ''}</div>
+                      <div class="company-name">${myCompany.name || ''}</div>
+                      <div>〒${myCompany.zip || ''}</div>
+                      <div>${myCompany.address || ''}</div>
+                      <div>TEL：${myCompany.tel || ''}</div>
+                      <div style="margin-top: 10px;">担当：${myCompany.person || ''}</div>
+                    </div>
+                  </div>
 
-            html += `
-                  </tbody>
-                </table>
+                  <table class="items">
+                    <thead>
+                      <tr>
+                        <th style="width: 5%;">No</th>
+                        <th style="width: 40%;">品名・仕様</th>
+                        <th style="width: 10%;">数量</th>
+                        <th style="width: 10%;">単位</th>
+                        <th style="width: 15%;">単価</th>
+                        <th style="width: 20%;">金額</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${quoteData.items.map((item, index) => {
+                        const priceText = item.price ? `¥${item.price.toLocaleString()}` : '';
+                        const unitPriceText = item.unit_price ? `¥${item.unit_price.toLocaleString()}` : '';
+                        const quantityText = item.quantity ? item.quantity : '';
+                        return `
+                        <tr>
+                          <td class="text-center">${index + 1}</td>
+                          <td>${item.name || ''}</td>
+                          <td class="text-right">${quantityText}</td>
+                          <td class="text-center">${item.unit || ''}</td>
+                          <td class="text-right">${unitPriceText}</td>
+                          <td class="text-right">${priceText}</td>
+                        </tr>
+                        `;
+                      }).join('')}
+                    </tbody>
+                  </table>
+                </div>
                 <script>
                   window.onload = function() {
-                    setTimeout(function() { 
-                      window.print(); 
-                      setTimeout(function() { window.close(); }, 500);
-                    }, 500);
+                    setTimeout(function() { window.print(); setTimeout(function() { window.close(); }, 500); }, 500);
                   };
                 <\/script>
               </body>
               </html>
             `;
-            
             printWindow.document.write(html);
             printWindow.document.close();
           };
 
-          const copyTSVToClipboard = () => {
+          // ==========================================
+
+          const generateCSVContent = () => { /* 既存機能 */
+            const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+            let csvContent = "ファイル名,書類種別,発行日,宛先,発行元,工事名,現場住所,合計金額,品名,数量,単位,単価,金額\n";
+            extractedDataList.forEach((data, index) => {
+              const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
+              const escapeCSV = (str) => String(str || '').replace(/"/g, '""');
+              const docType = escapeCSV(data.document_type); const date = escapeCSV(data.date);
+              const recipient = escapeCSV(data.recipient); const issuer = escapeCSV(data.issuer);
+              const projectName = escapeCSV(data.project_name); const projectAddress = escapeCSV(data.project_address);
+              const total = data.total_amount || 0;
+              const baseRow = `"${fileName}","${docType}","${date}","${recipient}","${issuer}","${projectName}","${projectAddress}",${total}`;
+              if (data.items && data.items.length > 0) {
+                data.items.forEach(item => {
+                  const name = escapeCSV(item.name); const unit = escapeCSV(item.unit);
+                  csvContent += `${baseRow},"${name}",${item.quantity || 0},"${unit}",${item.unit_price || 0},${item.price || 0}\n`;
+                });
+              } else { csvContent += `${baseRow},"","",0,"",0,0\n`; }
+            });
+            return { bom, csvContent };
+          };
+
+          const generateTSVContent = () => { /* 既存機能 */
+            let tsvContent = "ファイル名\t書類種別\t発行日\t宛先\t発行元\t工事名\t現場住所\t合計金額\t品名\t数量\t単位\t単価\t金額\n";
+            extractedDataList.forEach((data, index) => {
+              const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
+              const escapeTSV = (str) => String(str || '').replace(/\t/g, ' ').replace(/\n/g, ' ');
+              const docType = escapeTSV(data.document_type); const date = escapeTSV(data.date);
+              const recipient = escapeTSV(data.recipient); const issuer = escapeTSV(data.issuer);
+              const projectName = escapeTSV(data.project_name); const projectAddress = escapeTSV(data.project_address);
+              const total = data.total_amount || 0;
+              const baseRow = `${fileName}\t${docType}\t${date}\t${recipient}\t${issuer}\t${projectName}\t${projectAddress}\t${total}`;
+              if (data.items && data.items.length > 0) {
+                data.items.forEach(item => {
+                  const name = escapeTSV(item.name); const unit = escapeTSV(item.unit);
+                  tsvContent += `${baseRow}\t${name}\t${item.quantity || 0}\t${unit}\t${item.unit_price || 0}\t${item.price || 0}\n`;
+                });
+              } else { tsvContent += `${baseRow}\t\t0\t\t0\t0\n`; }
+            });
+            return tsvContent;
+          };
+
+          const exportJSON = () => { /* 既存機能 */
+            const exportData = extractedDataList.map((data, index) => {
+              const { isAnalyzed, ...rest } = data;
+              return { file_name: imageFiles[index]?.name || `file_${index+1}`, ...rest };
+            });
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
+            const downloadAnchorNode = document.createElement('a'); downloadAnchorNode.setAttribute("href", dataStr); downloadAnchorNode.setAttribute("download", "extracted_documents_all.json"); document.body.appendChild(downloadAnchorNode); downloadAnchorNode.click(); downloadAnchorNode.remove();
+          };
+
+          const exportCSV = () => { /* 既存機能 */
+            const { bom, csvContent } = generateCSVContent();
+            const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' }); const url = URL.createObjectURL(blob);
+            const downloadAnchorNode = document.createElement('a'); downloadAnchorNode.setAttribute("href", url); downloadAnchorNode.setAttribute("download", "extracted_documents_all.csv"); document.body.appendChild(downloadAnchorNode); downloadAnchorNode.click(); downloadAnchorNode.remove();
+          };
+
+          const exportExcel = () => { /* 既存機能 */
+            if (typeof XLSX === 'undefined') { setError("Excel生成ライブラリの読み込みに失敗しました。"); return; }
+            const aoa = [ ["ファイル名", "書類種別", "発行日", "宛先", "発行元", "工事名", "現場住所", "合計金額", "品名", "数量", "単位", "単価", "金額"] ];
+            extractedDataList.forEach((data, index) => {
+              const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
+              const baseRow = [fileName, data.document_type || "", data.date || "", data.recipient || "", data.issuer || "", data.project_name || "", data.project_address || "", data.total_amount || 0];
+              if (data.items && data.items.length > 0) {
+                data.items.forEach(item => { aoa.push([...baseRow, item.name || "", item.quantity || 0, item.unit || "", item.unit_price || 0, item.price || 0]); });
+              } else { aoa.push([...baseRow, "", 0, "", 0, 0]); }
+            });
+            const worksheet = XLSX.utils.aoa_to_sheet(aoa); const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, worksheet, "抽出データ"); XLSX.writeFile(workbook, "extracted_documents_all.xlsx");
+          };
+
+          const exportPDF = () => { /* 既存機能 */
+            const printWindow = window.open('', '_blank');
+            if (!printWindow) { setError("ポップアップがブロックされました。PDF出力するにはポップアップを許可してください。"); return; }
+            let html = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>抽出データ一覧 (PDF用)</title><style>body { font-family: sans-serif; font-size: 11px; padding: 20px; color: #333; } table { border-collapse: collapse; width: 100%; margin-top: 20px; } th, td { border: 1px solid #ccc; padding: 6px; text-align: left; } th { background-color: #f8f9fa; font-weight: bold; } .text-right { text-align: right; } @media print { @page { margin: 15mm; size: landscape; } }</style></head><body><h2>抽出データ一覧</h2><table><thead><tr><th>ファイル名</th><th>書類種別</th><th>発行日</th><th>宛先</th><th>発行元</th><th>工事名</th><th>現場住所</th><th>合計金額</th><th>品名</th><th>数量</th><th>単位</th><th>単価</th><th>金額</th></tr></thead><tbody>`;
+            extractedDataList.forEach((data, index) => {
+              const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
+              if (data.items && data.items.length > 0) {
+                data.items.forEach(item => { html += `<tr><td>${fileName}</td><td>${data.document_type || ''}</td><td>${data.date || ''}</td><td>${data.recipient || ''}</td><td>${data.issuer || ''}</td><td>${data.project_name || ''}</td><td>${data.project_address || ''}</td><td class="text-right">${data.total_amount || 0}</td><td>${item.name || ''}</td><td class="text-right">${item.quantity || 0}</td><td>${item.unit || ''}</td><td class="text-right">${item.unit_price || 0}</td><td class="text-right">${item.price || 0}</td></tr>`; });
+              } else { html += `<tr><td>${fileName}</td><td>${data.document_type || ''}</td><td>${data.date || ''}</td><td>${data.recipient || ''}</td><td>${data.issuer || ''}</td><td>${data.project_name || ''}</td><td>${data.project_address || ''}</td><td class="text-right">${data.total_amount || 0}</td><td></td><td></td><td></td><td></td><td></td></tr>`; }
+            });
+            html += `</tbody></table><script>window.onload = function() { setTimeout(function() { window.print(); setTimeout(function() { window.close(); }, 500); }, 500); };<\/script></body></html>`;
+            printWindow.document.write(html); printWindow.document.close();
+          };
+
+          const copyTSVToClipboard = () => { /* 既存機能 */
             const tsvContent = generateTSVContent();
             try {
-              const textArea = document.createElement("textarea");
-              textArea.value = tsvContent;
-              document.body.appendChild(textArea);
-              textArea.select();
-              document.execCommand("copy");
-              textArea.remove();
-              
-              setToastMessage("TSV形式でコピーしました（Excelにそのまま貼り付け可能です）");
-              setTimeout(() => setToastMessage(null), 3000);
-            } catch (err) {
-              setError("クリップボードへのコピーに失敗しました。");
-            }
+              const textArea = document.createElement("textarea"); textArea.value = tsvContent; document.body.appendChild(textArea); textArea.select(); document.execCommand("copy"); textArea.remove();
+              setToastMessage("TSV形式でコピーしました（Excelにそのまま貼り付け可能です）"); setTimeout(() => setToastMessage(null), 3000);
+            } catch (err) { setError("クリップボードへのコピーに失敗しました。"); }
           };
 
           const renderResizableHeader = (label, colKey) => (
             <th className="p-2 font-bold relative group" style={{ width: columnWidths[colKey] }}>
               {label}
-              <div
-                className="absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent group-hover:bg-blue-400/50 transition-colors z-10"
-                onMouseDown={(e) => startResize(e, colKey)}
-                onTouchStart={(e) => startResize(e, colKey)}
-              />
+              <div className="absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent group-hover:bg-blue-400/50 transition-colors z-10" onMouseDown={(e) => startResize(e, colKey)} onTouchStart={(e) => startResize(e, colKey)} />
             </th>
           );
 
+          // メイン画面のフォームコンテンツ
           const renderFormContent = (isOverlay = false) => {
             const inputBase = "w-full p-2 border rounded outline-none transition-colors font-medium ";
-            const textInputClass = isOverlay 
-              ? inputBase + "border-gray-400/50 bg-white/40 focus:bg-white/90 text-gray-900 placeholder-gray-700/50" 
-              : inputBase + "border-gray-300 bg-white focus:ring-2 focus:ring-blue-500 text-gray-800";
-            
-            const tableInputClass = isOverlay
-              ? "w-full p-1.5 border border-transparent bg-white/30 hover:bg-white/50 focus:bg-white/90 rounded outline-none text-gray-900 font-medium"
-              : "w-full p-1.5 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded outline-none";
-
+            const textInputClass = isOverlay ? inputBase + "border-gray-400/50 bg-white/40 focus:bg-white/90 text-gray-900 placeholder-gray-700/50" : inputBase + "border-gray-300 bg-white focus:ring-2 focus:ring-blue-500 text-gray-800";
+            const tableInputClass = isOverlay ? "w-full p-1.5 border border-transparent bg-white/30 hover:bg-white/50 focus:bg-white/90 rounded outline-none text-gray-900 font-medium" : "w-full p-1.5 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded outline-none";
             const labelClass = `block text-xs font-bold mb-1 ${isOverlay ? 'text-gray-800' : 'text-gray-500'}`;
 
             return (
               <div className={`p-4 md:p-6 space-y-6 ${isOverlay ? '' : 'overflow-y-auto flex-grow'}`}>
                 {extractedData.isAnalyzed && (
-                   <div className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-800 text-xs font-bold rounded">
-                     <FaIcon name="check-circle" /> AI解析完了
-                   </div>
+                   <div className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-800 text-xs font-bold rounded"><FaIcon name="check-circle" /> AI解析完了</div>
                 )}
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className={labelClass}>書類種別</label>
-                    <input type="text" value={extractedData.document_type} onChange={(e) => handleInputChange('document_type', e.target.value)} className={textInputClass} placeholder="例: 御見積書" />
-                  </div>
-                  <div>
-                    <label className={labelClass}>発行日</label>
-                    <input type="text" value={extractedData.date} onChange={(e) => handleInputChange('date', e.target.value)} className={textInputClass} placeholder="202X年X月X日" />
-                  </div>
-                  <div>
-                    <label className={labelClass}>宛先</label>
-                    <input type="text" value={extractedData.recipient} onChange={(e) => handleInputChange('recipient', e.target.value)} className={textInputClass} placeholder="株式会社〇〇" />
-                  </div>
-                  <div>
-                    <label className={labelClass}>発行元</label>
-                    <input type="text" value={extractedData.issuer} onChange={(e) => handleInputChange('issuer', e.target.value)} className={textInputClass} placeholder="〇〇株式会社" />
-                  </div>
-                  <div>
-                    <label className={labelClass}>工事名・現場名</label>
-                    <input type="text" value={extractedData.project_name} onChange={(e) => handleInputChange('project_name', e.target.value)} className={textInputClass} placeholder="〇〇邸新築工事" />
-                  </div>
-                  <div>
-                    <label className={labelClass}>現場住所</label>
-                    <input type="text" value={extractedData.project_address} onChange={(e) => handleInputChange('project_address', e.target.value)} className={textInputClass} placeholder="東京都〇〇区..." />
-                  </div>
+                  <div><label className={labelClass}>書類種別</label><input type="text" value={extractedData.document_type} onChange={(e) => handleInputChange('document_type', e.target.value)} className={textInputClass} placeholder="例: 御見積書" /></div>
+                  <div><label className={labelClass}>発行日</label><input type="text" value={extractedData.date} onChange={(e) => handleInputChange('date', e.target.value)} className={textInputClass} placeholder="202X年X月X日" /></div>
+                  <div><label className={labelClass}>宛先</label><input type="text" value={extractedData.recipient} onChange={(e) => handleInputChange('recipient', e.target.value)} className={textInputClass} placeholder="株式会社〇〇" /></div>
+                  <div><label className={labelClass}>発行元</label><input type="text" value={extractedData.issuer} onChange={(e) => handleInputChange('issuer', e.target.value)} className={textInputClass} placeholder="〇〇株式会社" /></div>
+                  <div><label className={labelClass}>工事名・現場名</label><input type="text" value={extractedData.project_name} onChange={(e) => handleInputChange('project_name', e.target.value)} className={textInputClass} placeholder="〇〇邸新築工事" /></div>
+                  <div><label className={labelClass}>現場住所</label><input type="text" value={extractedData.project_address} onChange={(e) => handleInputChange('project_address', e.target.value)} className={textInputClass} placeholder="東京都〇〇区..." /></div>
                   <div className="md:col-span-2">
                     <label className={labelClass}>合計金額</label>
-                    <div className="relative">
-                      <span className={`absolute left-3 top-2.5 font-bold ${isOverlay ? 'text-gray-800' : 'text-gray-500'}`}>¥</span>
-                      <input type="number" value={extractedData.total_amount} onChange={(e) => handleInputChange('total_amount', Number(e.target.value))} className={`${textInputClass} pl-8 text-lg text-right`} />
-                    </div>
+                    <div className="relative"><span className={`absolute left-3 top-2.5 font-bold ${isOverlay ? 'text-gray-800' : 'text-gray-500'}`}>¥</span><input type="number" value={extractedData.total_amount} onChange={(e) => handleInputChange('total_amount', Number(e.target.value))} className={`${textInputClass} pl-8 text-lg text-right`} /></div>
                   </div>
                 </div>
 
                 <div className="mt-8">
                   <div className="flex justify-between items-center mb-2">
                     <h3 className={`font-bold ${isOverlay ? 'text-gray-900' : 'text-gray-700'}`}>明細項目</h3>
-                    <button onClick={addItem} className={`text-sm flex items-center gap-1 font-bold ${isOverlay ? 'text-blue-800 hover:text-blue-900' : 'text-blue-600 hover:text-blue-800'}`}>
-                      <FaIcon name="plus" size={14} /> 行を追加
-                    </button>
+                    <button onClick={addItem} className={`text-sm flex items-center gap-1 font-bold ${isOverlay ? 'text-blue-800 hover:text-blue-900' : 'text-blue-600 hover:text-blue-800'}`}><FaIcon name="plus" size={14} /> 行を追加</button>
                   </div>
                   <div className={`overflow-x-auto border rounded-lg ${isOverlay ? 'border-gray-400/50 bg-white/20' : 'border-gray-200'}`}>
                     <table className="w-full text-sm text-left table-fixed">
                       <thead className={`border-b ${isOverlay ? 'border-gray-400/50 text-gray-900 bg-white/40' : 'bg-gray-50 border-gray-200 text-gray-600'}`}>
                         <tr>
-                          <th className="p-1 w-6 text-center"></th> {/* ドラッグハンドル用の空ヘッダ */}
+                          <th className="p-1 w-6 text-center"></th>
                           {renderResizableHeader('品名', 'name')}
                           {renderResizableHeader('数量', 'quantity')}
                           {renderResizableHeader('単位', 'unit')}
@@ -816,40 +831,17 @@
                       </thead>
                       <tbody className={`divide-y ${isOverlay ? 'divide-gray-400/30' : 'divide-gray-100'}`}>
                         {extractedData.items.map((item, index) => (
-                          <tr 
-                            key={index} 
-                            draggable={true}
-                            onDragStart={(e) => {
-                              // 入力欄内のテキスト選択操作を邪魔しないための処理
-                              if (e.target.tagName.toLowerCase() === 'input') {
-                                e.preventDefault();
-                                return;
-                              }
-                              handleRowDragStart(e, index);
-                            }}
-                            onDragEnter={(e) => handleRowDragEnter(e, index)}
-                            onDragEnd={handleRowDragEnd}
-                            onDragOver={handleRowDragOver}
-                            className={isOverlay ? 'hover:bg-white/30' : 'hover:bg-gray-50'}
-                          >
-                            <td className="p-1 text-center cursor-move text-gray-400 hover:text-gray-600 transition-colors" title="ドラッグして並び替え">
-                              <FaIcon name="grip-vertical" size={14} />
-                            </td>
+                          <tr key={index} draggable={true} onDragStart={(e) => { if (e.target.tagName.toLowerCase() === 'input') { e.preventDefault(); return; } handleRowDragStart(e, index); }} onDragEnter={(e) => handleRowDragEnter(e, index)} onDragEnd={handleRowDragEnd} onDragOver={handleRowDragOver} className={isOverlay ? 'hover:bg-white/30' : 'hover:bg-gray-50'}>
+                            <td className="p-1 text-center cursor-move text-gray-400 hover:text-gray-600 transition-colors" title="ドラッグして並び替え"><FaIcon name="grip-vertical" size={14} /></td>
                             <td className="p-1"><input type="text" value={item.name} onChange={(e) => handleItemChange(index, 'name', e.target.value)} className={tableInputClass} /></td>
                             <td className="p-1"><input type="number" value={item.quantity} onChange={(e) => handleItemChange(index, 'quantity', Number(e.target.value))} className={`${tableInputClass} text-right`} /></td>
                             <td className="p-1"><input type="text" value={item.unit} onChange={(e) => handleItemChange(index, 'unit', e.target.value)} className={`${tableInputClass} text-center`} /></td>
                             <td className="p-1"><input type="number" value={item.unit_price} onChange={(e) => handleItemChange(index, 'unit_price', Number(e.target.value))} className={`${tableInputClass} text-right`} /></td>
                             <td className="p-1"><input type="number" value={item.price} onChange={(e) => handleItemChange(index, 'price', Number(e.target.value))} className={`${tableInputClass} text-right font-bold`} /></td>
-                            <td className="p-1 text-center">
-                              <button onClick={() => removeItem(index)} className="p-1.5 text-red-500 hover:bg-red-100/50 rounded" title="行を削除">
-                                <FaIcon name="trash" size={14} />
-                              </button>
-                            </td>
+                            <td className="p-1 text-center"><button onClick={() => removeItem(index)} className="p-1.5 text-red-500 hover:bg-red-100/50 rounded" title="行を削除"><FaIcon name="trash" size={14} /></button></td>
                           </tr>
                         ))}
-                        {extractedData.items.length === 0 && (
-                          <tr><td colSpan="7" className="p-8 text-center text-gray-500 font-bold">明細データがありません</td></tr>
-                        )}
+                        {extractedData.items.length === 0 && (<tr><td colSpan="7" className="p-8 text-center text-gray-500 font-bold">明細データがありません</td></tr>)}
                       </tbody>
                     </table>
                   </div>
@@ -864,14 +856,9 @@
               onMouseUp={resizeState ? endResize : null}
               onMouseLeave={resizeState ? endResize : null}
             >
-              {/* トースト通知 */}
               {toastMessage && (
                 <div className="fixed top-6 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-5 py-3 rounded-lg shadow-2xl z-50 flex items-center gap-3 transition-all animate-fade-in-down">
-                  {toastMessage.includes("変換中") ? (
-                    <FaIcon name="spinner" className="fa-spin text-blue-400" size={20} />
-                  ) : (
-                    <FaIcon name="circle-check" className="text-green-400" size={20} />
-                  )}
+                  {toastMessage.includes("中") ? <FaIcon name="spinner" className="fa-spin text-blue-400" size={20} /> : <FaIcon name="circle-check" className="text-green-400" size={20} />}
                   <span className="font-medium">{toastMessage}</span>
                 </div>
               )}
@@ -882,80 +869,29 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.15</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.16</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
-                    {/* 表示モードトグル */}
                     <div className="flex bg-gray-200 p-1 rounded-lg">
-                      <button
-                        onClick={() => setViewMode('split')}
-                        className={`px-3 py-1.5 rounded-md flex items-center gap-2 text-sm font-medium transition-all ${viewMode === 'split' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
-                      >
-                        <FaIcon name="table-columns" size={16} /> 分割ビュー
-                      </button>
-                      <button
-                        onClick={() => setViewMode('overlay')}
-                        className={`px-3 py-1.5 rounded-md flex items-center gap-2 text-sm font-medium transition-all ${viewMode === 'overlay' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
-                      >
-                        <FaIcon name="layer-group" size={16} /> 透過レビュー
-                      </button>
+                      <button onClick={() => setViewMode('split')} className={`px-3 py-1.5 rounded-md flex items-center gap-2 text-sm font-medium transition-all ${viewMode === 'split' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}><FaIcon name="table-columns" size={16} /> 分割</button>
+                      <button onClick={() => setViewMode('overlay')} className={`px-3 py-1.5 rounded-md flex items-center gap-2 text-sm font-medium transition-all ${viewMode === 'overlay' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}><FaIcon name="layer-group" size={16} /> 透過</button>
                     </div>
-                    
                     <div className="h-6 w-px bg-gray-300"></div>
-
-                    <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors text-gray-700">
-                      <FaIcon name="gear" size={16} /> API設定
-                    </button>
-
-                    {/* エクスポートメニュー */}
+                    <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors text-gray-700"><FaIcon name="gear" size={16} /> API設定</button>
+                    
                     <div className="relative" ref={exportMenuRef}>
-                      <button 
-                        onClick={() => setIsExportMenuOpen(!isExportMenuOpen)} 
-                        disabled={imageFiles.length === 0}
-                        className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-bold shadow-sm transition-colors"
-                      >
-                        <FaIcon name="download" size={16} /> 
-                        保存・出力
-                        <FaIcon name="chevron-down" size={12} className={`transition-transform duration-200 ${isExportMenuOpen ? 'rotate-180' : ''}`} />
+                      <button onClick={() => setIsExportMenuOpen(!isExportMenuOpen)} disabled={imageFiles.length === 0} className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-bold shadow-sm transition-colors">
+                        <FaIcon name="download" size={16} /> 抽出データ出力 <FaIcon name="chevron-down" size={12} className={`transition-transform duration-200 ${isExportMenuOpen ? 'rotate-180' : ''}`} />
                       </button>
-
                       {isExportMenuOpen && (
                         <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden z-50">
                           <div className="py-1">
-                            <button onClick={() => { exportCSV(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors">
-                              <FaIcon name="file-csv" className="text-gray-500 w-5 text-center" size={18} />
-                              <div>
-                                <div className="font-bold">CSV形式で保存</div>
-                                <div className="text-xs text-gray-500 mt-0.5">システム連携などに利用</div>
-                              </div>
-                            </button>
-                            <button onClick={() => { exportExcel(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-t border-gray-100">
-                              <FaIcon name="file-excel" className="text-green-600 w-5 text-center" size={18} />
-                              <div>
-                                <div className="font-bold text-green-700">Excel形式で保存</div>
-                                <div className="text-xs text-gray-500 mt-0.5">.xlsxファイルとして保存</div>
-                              </div>
-                            </button>
-                            <button onClick={() => { exportPDF(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-t border-gray-100">
-                              <FaIcon name="file-pdf" className="text-red-500 w-5 text-center" size={18} />
-                              <div>
-                                <div className="font-bold text-red-600">PDF形式で保存</div>
-                                <div className="text-xs text-gray-500 mt-0.5">印刷・配布用に最適</div>
-                              </div>
-                            </button>
-                            <button onClick={() => { exportJSON(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-t border-gray-100">
-                              <FaIcon name="file-code" className="text-gray-500 w-5 text-center" size={18} />
-                              <div>
-                                <div className="font-bold">JSON形式で保存</div>
-                                <div className="text-xs text-gray-500 mt-0.5">開発用フォーマット</div>
-                              </div>
-                            </button>
-                            <div className="bg-gray-50 p-3 border-t border-gray-200">
-                              <button onClick={() => { copyTSVToClipboard(); setIsExportMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-blue-600 bg-white border border-blue-200 hover:bg-blue-50 hover:border-blue-300 rounded-lg flex items-center justify-center gap-2 transition-colors font-bold shadow-sm">
-                                <FaIcon name="copy" /> TSVをコピー (Excel貼付用)
-                              </button>
-                            </div>
+                            <button onClick={() => { exportCSV(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-b border-gray-100"><FaIcon name="file-csv" className="text-gray-500 w-5 text-center" size={18} /><div><div className="font-bold">CSV形式で保存</div></div></button>
+                            <button onClick={() => { exportExcel(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-b border-gray-100"><FaIcon name="file-excel" className="text-green-600 w-5 text-center" size={18} /><div><div className="font-bold text-green-700">Excel形式で保存</div></div></button>
+                            <button onClick={() => { exportPDF(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-b border-gray-100"><FaIcon name="file-pdf" className="text-red-500 w-5 text-center" size={18} /><div><div className="font-bold text-red-600">PDF(一覧)で保存</div></div></button>
+                            <button onClick={() => { exportJSON(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors"><FaIcon name="file-code" className="text-gray-500 w-5 text-center" size={18} /><div><div className="font-bold">JSON形式で保存</div></div></button>
+                            <div className="bg-gray-50 p-3 border-t border-gray-200"><button onClick={() => { copyTSVToClipboard(); setIsExportMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-blue-600 bg-white border border-blue-200 hover:bg-blue-50 rounded-lg flex justify-center items-center gap-2 font-bold shadow-sm"><FaIcon name="copy" /> TSVをコピー</button></div>
                           </div>
                         </div>
                       )}
@@ -963,253 +899,251 @@
                   </div>
                 </header>
 
-                {error && (
-                  <div className="mb-4 p-3 bg-red-50 border-l-4 border-red-500 text-red-700 flex items-center gap-3 rounded text-sm">
-                    <FaIcon name="circle-exclamation" size={18} /> <p>{error}</p>
-                  </div>
-                )}
+                {error && <div className="mb-4 p-3 bg-red-50 border-l-4 border-red-500 text-red-700 flex items-center gap-3 rounded text-sm"><FaIcon name="circle-exclamation" size={18} /> <p>{error}</p></div>}
 
-                {/* コントロールバー（複数ファイル対応） */}
                 <div className="mb-6 bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-wrap justify-between items-center gap-4">
                   <div className="flex flex-wrap items-center gap-4">
                     <input type="file" multiple accept="image/*,application/pdf" onChange={handleImageUpload} ref={fileInputRef} className="hidden" />
-                    <button onClick={() => fileInputRef.current?.click()} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 transition-colors font-medium text-gray-700 disabled:opacity-50">
-                      <FaIcon name="upload" size={16} /> {imageFiles.length > 0 ? `${imageFiles.length}枚の画像を読込済み` : '画像/PDFを選択(複数可)'}
-                    </button>
-
-                    {/* ファイルナビゲーション */}
+                    <button onClick={() => fileInputRef.current?.click()} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 font-medium text-gray-700 disabled:opacity-50"><FaIcon name="upload" size={16} /> {imageFiles.length > 0 ? `${imageFiles.length}枚の画像を読込済み` : '画像/PDFを選択(複数可)'}</button>
                     {imageFiles.length > 0 && (
                       <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 p-1.5 rounded-lg">
-                        <button 
-                          disabled={currentFileIndex === 0 || isAnalyzingAll} 
-                          onClick={() => setCurrentFileIndex(i => i - 1)} 
-                          className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-200 rounded disabled:opacity-30 disabled:hover:bg-transparent"
-                        ><FaIcon name="chevron-left" /></button>
-                        
-                        <div className="text-sm font-medium w-32 text-center flex flex-col items-center">
-                          <span className="text-gray-700">{currentFileIndex + 1} / {imageFiles.length}</span>
-                          <span className="text-xs text-gray-400 truncate w-full" title={imageFiles[currentFileIndex].name}>
-                            {imageFiles[currentFileIndex].name}
-                          </span>
-                        </div>
-                        
-                        <button 
-                          disabled={currentFileIndex === imageFiles.length - 1 || isAnalyzingAll} 
-                          onClick={() => setCurrentFileIndex(i => i + 1)} 
-                          className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-200 rounded disabled:opacity-30 disabled:hover:bg-transparent"
-                        ><FaIcon name="chevron-right" /></button>
+                        <button disabled={currentFileIndex === 0 || isAnalyzingAll} onClick={() => setCurrentFileIndex(i => i - 1)} className="p-1.5 text-gray-500 hover:bg-gray-200 rounded disabled:opacity-30"><FaIcon name="chevron-left" /></button>
+                        <div className="text-sm font-medium w-32 text-center flex flex-col items-center"><span className="text-gray-700">{currentFileIndex + 1} / {imageFiles.length}</span><span className="text-xs text-gray-400 truncate w-full" title={imageFiles[currentFileIndex].name}>{imageFiles[currentFileIndex].name}</span></div>
+                        <button disabled={currentFileIndex === imageFiles.length - 1 || isAnalyzingAll} onClick={() => setCurrentFileIndex(i => i + 1)} className="p-1.5 text-gray-500 hover:bg-gray-200 rounded disabled:opacity-30"><FaIcon name="chevron-right" /></button>
                       </div>
                     )}
                   </div>
 
-                  {/* 解析アクションボタン */}
                   <div className="flex gap-2">
-                    <button onClick={analyzeCurrentImage} disabled={!imageSrc || loading || isAnalyzingAll || !userApiKey} className="flex items-center gap-2 px-4 py-2 bg-white border border-blue-600 text-blue-600 rounded-md hover:bg-blue-50 disabled:opacity-50 font-bold transition-colors">
-                      {loading && !isAnalyzingAll ? <FaIcon name="spinner" size={16} className="fa-spin" /> : <FaIcon name="play" size={16} />}
-                      表示中を処理
+                    <button onClick={analyzeCurrentImage} disabled={!imageSrc || loading || isAnalyzingAll || !userApiKey} className="flex items-center gap-2 px-4 py-2 bg-white border border-blue-600 text-blue-600 rounded-md hover:bg-blue-50 disabled:opacity-50 font-bold"><FaIcon name={loading && !isAnalyzingAll ? "spinner" : "play"} size={16} className={loading && !isAnalyzingAll ? "fa-spin" : ""} />表示中を処理</button>
+                    {imageFiles.length > 1 && <button onClick={() => isAnalyzingAll ? null : openPageSelectModal()} disabled={!imageSrc || loading || !userApiKey} className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 disabled:opacity-50 font-bold"><FaIcon name={isAnalyzingAll ? "spinner" : "list-check"} size={16} className={isAnalyzingAll ? "fa-spin" : ""} />{isAnalyzingAll ? `一括処理中(${analyzingIndex + 1}/${imageFiles.length})` : '選択して一括'}</button>}
+                    
+                    {/* ★追加：見積書作成ボタン */}
+                    <button onClick={openQuoteEditor} disabled={!extractedData.isAnalyzed} className="flex items-center gap-2 px-5 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 font-bold ml-4 shadow-sm border border-indigo-700">
+                      <FaIcon name="file-invoice" size={16} /> 見積書を作成
                     </button>
-                    {imageFiles.length > 1 && (
-                      <button 
-                        onClick={() => isAnalyzingAll ? null : openPageSelectModal()} 
-                        disabled={!imageSrc || loading || !userApiKey} 
-                        className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-80 font-bold transition-colors shadow-sm"
-                      >
-                        {isAnalyzingAll ? <FaIcon name="spinner" size={16} className="fa-spin" /> : <FaIcon name="list-check" size={16} />}
-                        {isAnalyzingAll ? `一括処理中(${analyzingIndex + 1}/${imageFiles.length})` : '選択して一括処理'}
-                      </button>
-                    )}
                   </div>
                 </div>
 
-                {/* ページ選択モーダル */}
-                {isPageSelectModalOpen && (
-                  <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
-                      <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-                        <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                          <FaIcon name="list-check" className="text-blue-600" />
-                          処理するページを選択
-                        </h2>
-                        <button onClick={() => setIsPageSelectModalOpen(false)} className="text-gray-500 hover:text-gray-700">
-                          <FaIcon name="xmark" size={20} />
-                        </button>
-                      </div>
-                      
-                      <div className="p-4 border-b border-gray-100 flex justify-between items-center">
-                        <div className="text-sm font-medium text-gray-700 bg-blue-50 text-blue-800 px-3 py-1 rounded-full">
-                          {selectedPages.filter(Boolean).length} / {imageFiles.length} ページを選択中
-                        </div>
-                        <div className="flex gap-2">
-                           <button onClick={() => setSelectedPages(imageFiles.map(() => true))} className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-3 py-1.5 rounded transition-colors border border-transparent">すべて選択</button>
-                           <button onClick={() => setSelectedPages(imageFiles.map(() => false))} className="text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 px-3 py-1.5 rounded transition-colors border border-transparent">すべて解除</button>
-                        </div>
-                      </div>
-
-                      <div className="flex-grow overflow-y-auto p-4 bg-gray-100">
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                          {imageFiles.map((file, index) => {
-                            const isSelected = selectedPages[index];
-                            const isAnalyzed = extractedDataList[index]?.isAnalyzed;
-                            return (
-                              <div 
-                                key={index} 
-                                className={`relative rounded-lg border-2 overflow-hidden cursor-pointer bg-white transition-all hover:shadow-md ${isSelected ? 'border-blue-500 shadow-md' : 'border-transparent opacity-70 hover:opacity-100'}`}
-                                onClick={() => {
-                                  const newSelected = [...selectedPages];
-                                  newSelected[index] = !newSelected[index];
-                                  setSelectedPages(newSelected);
-                                }}
-                              >
-                                <div className="aspect-[3/4] bg-gray-200 w-full relative flex items-center justify-center p-1">
-                                   <img src={thumbnails[index]} className="max-w-full max-h-full object-contain shadow-sm bg-white" />
-                                   {isAnalyzed && (
-                                     <div className="absolute top-1 left-1 bg-green-100 text-green-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-green-200 shadow-sm">
-                                       解析済み
-                                     </div>
-                                   )}
-                                </div>
-                                <div className="p-2 text-xs truncate bg-gray-50 border-t border-gray-100 font-medium" title={file.name}>
-                                  {index + 1}. {file.name}
-                                </div>
-                                
-                                <div className="absolute top-2 right-2 shadow-sm rounded-full bg-white">
-                                  <div className={`w-5 h-5 rounded-full flex items-center justify-center border ${isSelected ? 'bg-blue-500 border-blue-500 text-white' : 'bg-white/80 border-gray-400 text-transparent'}`}>
-                                    <FaIcon name="check" size={12} />
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      <div className="p-4 border-t border-gray-200 flex justify-end gap-3 bg-gray-50">
-                        <button onClick={() => setIsPageSelectModalOpen(false)} className="px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
-                          キャンセル
-                        </button>
-                        <button 
-                          onClick={analyzeSelectedImages} 
-                          disabled={selectedPages.filter(Boolean).length === 0}
-                          className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-bold shadow-sm"
-                        >
-                          <FaIcon name="play" size={14} />
-                          選択したページを一括処理
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* APIキー設定モーダル */}
-                {showSettings && (
-                  <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
-                      <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-                        <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                          <FaIcon name="key" className="text-blue-600" size={20} />
-                          Gemini API設定
-                        </h2>
-                        <button onClick={() => setShowSettings(false)} className="text-gray-500 hover:text-gray-700">
-                          <FaIcon name="xmark" size={20} />
-                        </button>
-                      </div>
-                      <div className="p-6">
-                        <p className="text-sm text-gray-600 mb-4">
-                          このアプリを使用するには、Google AI Studioで取得したAPIキーが必要です。キーはブラウザにのみ保存され、外部のサーバーには送信されません。
-                        </p>
-                        <div className="mb-4">
-                          <label className="block text-sm font-bold text-gray-700 mb-2">APIキー</label>
-                          <input
-                            type="password"
-                            value={apiKeyInput}
-                            onChange={(e) => setApiKeyInput(e.target.value)}
-                            placeholder="AIzaSy..."
-                            className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                          />
-                        </div>
-                        <div className="flex justify-end gap-2 mt-6">
-                          <button onClick={() => setShowSettings(false)} className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">
-                            キャンセル
-                          </button>
-                          <button onClick={saveApiKey} className="px-4 py-2 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700">
-                            保存して閉じる
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
                 {/* メインビューエリア */}
                 {viewMode === 'split' ? (
-                  /* --- 分割ビュー --- */
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[calc(100vh-16rem)] min-h-[600px]">
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col overflow-hidden">
-                      <div className="p-3 border-b border-gray-200 bg-gray-50 font-semibold text-gray-700 flex items-center gap-2">
-                        <FaIcon name="image" size={16} /> 元データ
-                      </div>
-                      <div className="flex-grow p-4 overflow-auto bg-gray-100 flex justify-center">
-                        {imageSrc ? <img src={imageSrc} alt="Preview" className="max-w-full h-auto object-contain" /> : <p className="text-gray-400 mt-10">ファイルがありません</p>}
-                      </div>
+                      <div className="p-3 border-b border-gray-200 bg-gray-50 font-semibold text-gray-700 flex items-center gap-2"><FaIcon name="image" size={16} /> 元データ</div>
+                      <div className="flex-grow p-4 overflow-auto bg-gray-100 flex justify-center">{imageSrc ? <img src={imageSrc} className="max-w-full h-auto object-contain" /> : <p className="text-gray-400 mt-10">ファイルがありません</p>}</div>
                     </div>
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col overflow-hidden">
-                      <div className="p-3 border-b border-gray-200 bg-gray-50 font-semibold text-gray-700 flex items-center gap-2">
-                        <FaIcon name="file-excel" size={16} /> 抽出データ
-                      </div>
+                      <div className="p-3 border-b border-gray-200 bg-gray-50 font-semibold text-gray-700 flex items-center gap-2"><FaIcon name="file-excel" size={16} /> 抽出データ</div>
                       {renderFormContent(false)}
                     </div>
                   </div>
                 ) : (
-                  /* --- 透過オーバーレイビュー --- */
                   <div className="relative w-full h-[calc(100vh-16rem)] min-h-[700px] border border-gray-300 rounded-xl overflow-hidden bg-gray-200 shadow-inner">
-                    <div className="w-full h-full overflow-auto p-4 md:p-8">
-                      {imageSrc ? (
-                        <img src={imageSrc} alt="Preview" className="min-w-[800px] w-full h-auto shadow-md" />
-                      ) : (
-                        <div className="flex justify-center items-center h-full text-gray-400"><p>ファイルを選択してください</p></div>
-                      )}
-                    </div>
-
-                    <div 
-                      ref={panelRef}
-                      style={{ 
-                        left: panelPos.x, top: panelPos.y,
-                        width: panelSize.width, height: panelSize.height,
-                        backgroundColor: `rgba(255, 255, 255, ${panelOpacity})`,
-                        backdropFilter: 'blur(4px)'
-                      }}
-                      className={`absolute shadow-2xl rounded-xl flex flex-col border border-gray-300/50 transition-opacity ${isDragging ? 'opacity-90' : ''} ${resizeState ? '' : 'transition-all'}`}
-                    >
-                      <div 
-                        onMouseDown={startDrag} 
-                        onTouchStart={startDrag}
-                        className="cursor-move p-3 border-b border-gray-300/30 flex justify-between items-center bg-gray-200/50 rounded-t-xl hover:bg-gray-200/80 transition-colors"
-                      >
-                        <div className="flex items-center gap-2 font-bold text-gray-800">
-                          <FaIcon name="grip-lines" size={16} className="text-gray-500" />
-                          データ編集パネル
-                        </div>
-                        <div 
-                          className="flex items-center gap-3 text-sm font-medium bg-white/50 px-3 py-1 rounded-full shadow-sm" 
-                          onMouseDown={e => e.stopPropagation()}
-                          onTouchStart={e => e.stopPropagation()}
-                        >
-                          <span className="text-gray-700">透明度</span>
-                          <input type="range" min="0.1" max="1" step="0.05" value={panelOpacity} onChange={e => setPanelOpacity(parseFloat(e.target.value))} className="w-24 accent-blue-600" />
+                    <div className="w-full h-full overflow-auto p-4 md:p-8">{imageSrc ? <img src={imageSrc} className="min-w-[800px] w-full h-auto shadow-md" /> : <div className="flex justify-center items-center h-full text-gray-400"><p>ファイルを選択してください</p></div>}</div>
+                    <div ref={panelRef} style={{ left: panelPos.x, top: panelPos.y, width: panelSize.width, height: panelSize.height, backgroundColor: `rgba(255, 255, 255, ${panelOpacity})`, backdropFilter: 'blur(4px)' }} className={`absolute shadow-2xl rounded-xl flex flex-col border border-gray-300/50 transition-opacity ${isDragging ? 'opacity-90' : ''} ${resizeState ? '' : 'transition-all'}`}>
+                      <div onMouseDown={startDrag} onTouchStart={startDrag} className="cursor-move p-3 border-b border-gray-300/30 flex justify-between items-center bg-gray-200/50 rounded-t-xl hover:bg-gray-200/80">
+                        <div className="flex items-center gap-2 font-bold text-gray-800"><FaIcon name="grip-lines" size={16} className="text-gray-500" /> データ編集パネル</div>
+                        <div className="flex items-center gap-3 text-sm font-medium bg-white/50 px-3 py-1 rounded-full shadow-sm" onMouseDown={e=>e.stopPropagation()} onTouchStart={e=>e.stopPropagation()}>
+                          <span className="text-gray-700">透明度</span><input type="range" min="0.1" max="1" step="0.05" value={panelOpacity} onChange={e=>setPanelOpacity(parseFloat(e.target.value))} className="w-24 accent-blue-600" />
                         </div>
                       </div>
-
-                      <div className="flex-grow overflow-y-auto relative">
-                        {renderFormContent(true)}
-                      </div>
-
-                      <div className="absolute right-0 bottom-0 w-4 h-4 cursor-se-resize z-20" onMouseDown={(e) => startResize(e, 'panel-se')} onTouchStart={(e) => startResize(e, 'panel-se')} ></div>
-                      <div className="absolute right-0 top-0 w-1 h-full cursor-e-resize z-20" onMouseDown={(e) => startResize(e, 'panel-e')} onTouchStart={(e) => startResize(e, 'panel-e')} ></div>
-                      <div className="absolute left-0 bottom-0 w-full h-1 cursor-s-resize z-20" onMouseDown={(e) => startResize(e, 'panel-s')} onTouchStart={(e) => startResize(e, 'panel-s')} ></div>
+                      <div className="flex-grow overflow-y-auto relative">{renderFormContent(true)}</div>
+                      <div className="absolute right-0 bottom-0 w-4 h-4 cursor-se-resize z-20" onMouseDown={(e)=>startResize(e,'panel-se')} onTouchStart={(e)=>startResize(e,'panel-se')}></div>
                     </div>
                   </div>
                 )}
               </div>
+
+              {/* ★追加: 見積書作成フルスクリーンエディター */}
+              {isQuoteEditorOpen && (
+                <div className="fixed inset-0 bg-gray-100 z-[60] flex flex-col overflow-hidden animate-fade-in">
+                  <div className="bg-white px-6 py-3 border-b border-gray-200 flex justify-between items-center shadow-sm">
+                    <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                      <FaIcon name="file-invoice" className="text-indigo-600"/> 御見積書の作成
+                    </h2>
+                    <div className="flex gap-3">
+                        <button onClick={printQuotePDF} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold shadow-sm">
+                          <FaIcon name="file-pdf"/> PDF作成(印刷)
+                        </button>
+                        <button onClick={() => setIsQuoteEditorOpen(false)} className="flex items-center gap-2 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-bold">
+                          <FaIcon name="xmark"/> 閉じる
+                        </button>
+                    </div>
+                  </div>
+
+                  <div className="flex-grow overflow-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                    {/* 左サイドバー: 各種設定・基本情報 */}
+                    <div className="lg:col-span-3 space-y-6">
+                       
+                       {/* 1. 金額計算設定 */}
+                       <div className="bg-white p-5 rounded-xl shadow-sm border border-indigo-100 relative overflow-hidden">
+                         <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500"></div>
+                         <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><FaIcon name="calculator" className="text-indigo-500" /> 金額計算設定</h3>
+                         <div className="space-y-4">
+                           <div>
+                             <label className="block text-xs font-bold text-gray-500 mb-1">掛率 (元の単価 × 掛率)</label>
+                             <input type="number" step="0.1" value={quoteSettings.multiplier} onChange={e => setQuoteSettings(prev => ({...prev, multiplier: Number(e.target.value)}))} className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 outline-none text-right font-bold text-lg" />
+                           </div>
+                           <div>
+                             <label className="block text-xs font-bold text-gray-500 mb-1">丸め処理 (切り上げ単位)</label>
+                             <select value={quoteSettings.roundTarget} onChange={e => setQuoteSettings(prev => ({...prev, roundTarget: Number(e.target.value)}))} className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 outline-none font-medium bg-gray-50">
+                               <option value={1}>小数点以下切り上げ (整数化)</option>
+                               <option value={10}>10円単位切り上げ (1の位)</option>
+                               <option value={100}>100円単位切り上げ (10の位)</option>
+                               <option value={1000}>1,000円単位切り上げ (100の位)</option>
+                               <option value={0}>丸めない (そのまま)</option>
+                             </select>
+                           </div>
+                           <button onClick={applyQuoteSettings} className="w-full py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg font-bold hover:bg-indigo-100 transition-colors flex items-center justify-center gap-2">
+                             <FaIcon name="rotate" /> 単価を再計算する
+                           </button>
+                         </div>
+                       </div>
+
+                       {/* 2. 基本情報 */}
+                       <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+                         <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><FaIcon name="pen-to-square" className="text-gray-500" /> 見積基本情報</h3>
+                         <div className="space-y-3">
+                           <div><label className="block text-xs font-bold text-gray-500 mb-1">宛名 (お客様名)</label><input type="text" value={quoteData.recipient} onChange={e => handleQuoteInputChange('recipient', e.target.value)} className="w-full p-2 border border-gray-300 rounded outline-none" /></div>
+                           <div><label className="block text-xs font-bold text-gray-500 mb-1">工事名・件名</label><input type="text" value={quoteData.project_name} onChange={e => handleQuoteInputChange('project_name', e.target.value)} className="w-full p-2 border border-gray-300 rounded outline-none" /></div>
+                           <div><label className="block text-xs font-bold text-gray-500 mb-1">現場住所</label><input type="text" value={quoteData.project_address} onChange={e => handleQuoteInputChange('project_address', e.target.value)} className="w-full p-2 border border-gray-300 rounded outline-none" /></div>
+                           <div><label className="block text-xs font-bold text-gray-500 mb-1">発行日</label><input type="text" value={quoteData.date} onChange={e => handleQuoteInputChange('date', e.target.value)} className="w-full p-2 border border-gray-300 rounded outline-none" /></div>
+                         </div>
+                       </div>
+
+                       {/* 3. 自社情報 */}
+                       <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+                         <div className="flex justify-between items-center mb-4">
+                           <h3 className="font-bold text-gray-800 flex items-center gap-2"><FaIcon name="building" className="text-gray-500" /> 自社情報</h3>
+                           <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded">自動保存</span>
+                         </div>
+                         <div className="space-y-3">
+                           <div><label className="block text-xs font-bold text-gray-500 mb-1">会社名 / 屋号</label><input type="text" value={myCompany.name} onChange={e => handleMyCompanyChange('name', e.target.value)} className="w-full p-2 border border-gray-300 rounded outline-none" /></div>
+                           <div className="flex gap-2">
+                             <div className="w-1/3"><label className="block text-xs font-bold text-gray-500 mb-1">郵便番号</label><input type="text" value={myCompany.zip} onChange={e => handleMyCompanyChange('zip', e.target.value)} className="w-full p-2 border border-gray-300 rounded outline-none" placeholder="000-0000" /></div>
+                             <div className="w-2/3"><label className="block text-xs font-bold text-gray-500 mb-1">住所</label><input type="text" value={myCompany.address} onChange={e => handleMyCompanyChange('address', e.target.value)} className="w-full p-2 border border-gray-300 rounded outline-none" /></div>
+                           </div>
+                           <div><label className="block text-xs font-bold text-gray-500 mb-1">電話番号</label><input type="text" value={myCompany.tel} onChange={e => handleMyCompanyChange('tel', e.target.value)} className="w-full p-2 border border-gray-300 rounded outline-none" /></div>
+                           <div><label className="block text-xs font-bold text-gray-500 mb-1">担当者名</label><input type="text" value={myCompany.person} onChange={e => handleMyCompanyChange('person', e.target.value)} className="w-full p-2 border border-gray-300 rounded outline-none" /></div>
+                         </div>
+                       </div>
+                    </div>
+
+                    {/* 右メイン: 明細エディタ */}
+                    <div className="lg:col-span-9 bg-white p-5 md:p-6 rounded-xl shadow-sm border border-gray-200">
+                       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 border-b border-gray-200 pb-4 gap-4">
+                         <div>
+                           <h3 className="text-lg font-bold text-gray-800">御見積明細</h3>
+                           <p className="text-sm text-gray-500 mt-1">※ドラッグ＆ドロップで行の入れ替えが可能です</p>
+                         </div>
+                         <div className="flex items-center gap-6">
+                           <div className="text-right">
+                             <div className="text-xs font-bold text-gray-500 mb-1">御見積合計金額 (税抜)</div>
+                             <div className="text-2xl font-bold text-indigo-700 tracking-wider">¥ {quoteData.items.reduce((sum, item)=>sum + (item.price||0), 0).toLocaleString()} <span className="text-sm">-</span></div>
+                           </div>
+                           <button onClick={addQuoteItem} className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-lg font-bold transition-colors">
+                             <FaIcon name="plus" /> 行追加
+                           </button>
+                         </div>
+                       </div>
+
+                       <div className="overflow-x-auto rounded-lg border border-gray-200">
+                         <table className="w-full text-sm text-left table-fixed">
+                           <thead className="bg-gray-50 border-b border-gray-200 text-gray-600">
+                             <tr>
+                               <th className="p-2 w-10 text-center"></th>
+                               <th className="p-3 font-bold" style={{width: '35%'}}>品名・仕様</th>
+                               <th className="p-3 font-bold text-right" style={{width: '10%'}}>数量</th>
+                               <th className="p-3 font-bold text-center" style={{width: '10%'}}>単位</th>
+                               <th className="p-3 font-bold text-right" style={{width: '18%'}}>単価</th>
+                               <th className="p-3 font-bold text-right" style={{width: '18%'}}>金額</th>
+                               <th className="p-2 w-12 text-center"></th>
+                             </tr>
+                           </thead>
+                           <tbody className="divide-y divide-gray-100">
+                             {quoteData.items.map((item, index) => (
+                               <tr key={index} draggable={true} onDragStart={(e) => { if (e.target.tagName.toLowerCase() === 'input') { e.preventDefault(); return; } handleQuoteRowDragStart(e, index); }} onDragEnter={(e) => handleQuoteRowDragEnter(e, index)} onDragEnd={handleQuoteRowDragEnd} onDragOver={handleQuoteRowDragOver} className="hover:bg-indigo-50/30 transition-colors">
+                                 <td className="p-2 text-center cursor-move text-gray-300 hover:text-indigo-500"><FaIcon name="grip-vertical" size={16} /></td>
+                                 <td className="p-1"><input type="text" value={item.name} onChange={(e) => handleQuoteItemChange(index, 'name', e.target.value)} className="w-full p-2 border border-transparent hover:border-gray-200 focus:bg-white focus:border-indigo-400 rounded outline-none font-medium bg-transparent" /></td>
+                                 <td className="p-1"><input type="number" value={item.quantity} onChange={(e) => handleQuoteItemChange(index, 'quantity', Number(e.target.value))} className="w-full p-2 border border-transparent hover:border-gray-200 focus:bg-white focus:border-indigo-400 rounded outline-none text-right bg-transparent" /></td>
+                                 <td className="p-1"><input type="text" value={item.unit} onChange={(e) => handleQuoteItemChange(index, 'unit', e.target.value)} className="w-full p-2 border border-transparent hover:border-gray-200 focus:bg-white focus:border-indigo-400 rounded outline-none text-center bg-transparent" /></td>
+                                 <td className="p-1 relative group">
+                                   <input type="number" value={item.unit_price} onChange={(e) => handleQuoteItemChange(index, 'unit_price', Number(e.target.value))} className="w-full p-2 border border-transparent hover:border-gray-200 focus:bg-white focus:border-indigo-400 rounded outline-none text-right font-medium bg-transparent" />
+                                   {/* 元の単価を下に小さく表示 */}
+                                   <div className="absolute -bottom-1 right-2 text-[10px] text-gray-400 pointer-events-none group-focus-within:opacity-0 transition-opacity">元: {item.base_unit_price}</div>
+                                 </td>
+                                 <td className="p-1"><input type="number" value={item.price} readOnly className="w-full p-2 border border-transparent rounded outline-none text-right font-bold text-indigo-800 bg-transparent" /></td>
+                                 <td className="p-1 text-center"><button onClick={() => removeQuoteItem(index)} className="p-2 text-red-400 hover:bg-red-50 hover:text-red-600 rounded-lg"><FaIcon name="trash" size={14} /></button></td>
+                               </tr>
+                             ))}
+                           </tbody>
+                         </table>
+                       </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ... その他各種モーダル等(ページ選択・設定)は変更なし ... */}
+              {/* 以下ページ選択モーダル */}
+              {isPageSelectModalOpen && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
+                    <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                      <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2"><FaIcon name="list-check" className="text-blue-600" />処理するページを選択</h2>
+                      <button onClick={() => setIsPageSelectModalOpen(false)} className="text-gray-500 hover:text-gray-700"><FaIcon name="xmark" size={20} /></button>
+                    </div>
+                    <div className="p-4 border-b border-gray-100 flex justify-between items-center">
+                      <div className="text-sm font-medium text-gray-700 bg-blue-50 text-blue-800 px-3 py-1 rounded-full">{selectedPages.filter(Boolean).length} / {imageFiles.length} ページを選択中</div>
+                      <div className="flex gap-2">
+                         <button onClick={() => setSelectedPages(imageFiles.map(() => true))} className="text-sm font-medium text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded border border-transparent">すべて選択</button>
+                         <button onClick={() => setSelectedPages(imageFiles.map(() => false))} className="text-sm font-medium text-gray-600 hover:bg-gray-100 px-3 py-1.5 rounded border border-transparent">すべて解除</button>
+                      </div>
+                    </div>
+                    <div className="flex-grow overflow-y-auto p-4 bg-gray-100">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                        {imageFiles.map((file, index) => {
+                          const isSelected = selectedPages[index]; const isAnalyzed = extractedDataList[index]?.isAnalyzed;
+                          return (
+                            <div key={index} className={`relative rounded-lg border-2 overflow-hidden cursor-pointer bg-white transition-all hover:shadow-md ${isSelected ? 'border-blue-500 shadow-md' : 'border-transparent opacity-70 hover:opacity-100'}`} onClick={() => { const newSelected = [...selectedPages]; newSelected[index] = !newSelected[index]; setSelectedPages(newSelected); }}>
+                              <div className="aspect-[3/4] bg-gray-200 w-full relative flex items-center justify-center p-1">
+                                 <img src={thumbnails[index]} className="max-w-full max-h-full object-contain shadow-sm bg-white" />
+                                 {isAnalyzed && <div className="absolute top-1 left-1 bg-green-100 text-green-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-green-200 shadow-sm">解析済み</div>}
+                              </div>
+                              <div className="p-2 text-xs truncate bg-gray-50 border-t border-gray-100 font-medium" title={file.name}>{index + 1}. {file.name}</div>
+                              <div className="absolute top-2 right-2 shadow-sm rounded-full bg-white"><div className={`w-5 h-5 rounded-full flex items-center justify-center border ${isSelected ? 'bg-blue-500 border-blue-500 text-white' : 'bg-white/80 border-gray-400 text-transparent'}`}><FaIcon name="check" size={12} /></div></div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="p-4 border-t border-gray-200 flex justify-end gap-3 bg-gray-50">
+                      <button onClick={() => setIsPageSelectModalOpen(false)} className="px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">キャンセル</button>
+                      <button onClick={analyzeSelectedImages} disabled={selectedPages.filter(Boolean).length === 0} className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-bold shadow-sm"><FaIcon name="play" size={14} />選択したページを一括処理</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {showSettings && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+                    <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                      <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2"><FaIcon name="key" className="text-blue-600" size={20} />Gemini API設定</h2>
+                      <button onClick={() => setShowSettings(false)} className="text-gray-500 hover:text-gray-700"><FaIcon name="xmark" size={20} /></button>
+                    </div>
+                    <div className="p-6">
+                      <p className="text-sm text-gray-600 mb-4">Google AI Studioで取得したAPIキーを入力してください。</p>
+                      <div className="mb-4"><input type="password" value={apiKeyInput} onChange={(e) => setApiKeyInput(e.target.value)} placeholder="AIzaSy..." className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" /></div>
+                      <div className="flex justify-end gap-2 mt-6">
+                        <button onClick={() => setShowSettings(false)} className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">キャンセル</button>
+                        <button onClick={saveApiKey} className="px-4 py-2 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700">保存して閉じる</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
             </div>
           );
         }
