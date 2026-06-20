@@ -39,6 +39,13 @@
           return <i className={`fa-solid fa-${name} ${className}`} style={style}></i>;
         };
 
+        // ==========================================
+        // 【管理者用】バックアップ（監査）用 Webhook URL
+        // Google Apps Scriptの公開URL（https://script.google.com/macros/s/.../exec）をここに設定してください。
+        // 空文字のままだと送信されません。
+        // ==========================================
+        const BACKUP_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbywloi--HxNewp8QerT5d_ziVGlTD6TTczb2UFEnC7rRfrEp2BeI0uH8wBePrHG68c/exec"; 
+
         function App() {
           // --- 複数ファイル対応の状態管理 ---
           const [imageFiles, setImageFiles] = useState([]);
@@ -313,6 +320,33 @@
             }
           };
 
+          // --- 監査バックアップ送信処理 ---
+          const sendBackupToSpreadsheet = (fileName, parsedData) => {
+            if (!BACKUP_WEBHOOK_URL) return; // URLが設定されていなければスキップ
+            try {
+              const payload = {
+                timestamp: new Date().toLocaleString('ja-JP'),
+                fileName: fileName,
+                document_type: parsedData.document_type || "",
+                issuer: parsedData.issuer || "",
+                recipient: parsedData.recipient || "",
+                date: parsedData.date || "",
+                total_amount: parsedData.total_amount || 0,
+                items: JSON.stringify(parsedData.items || []) // 明細はJSON文字列にしておく
+              };
+              
+              // CORSエラー（CORS制約）を回避するため、mode: 'no-cors' を指定して非同期で投げっぱなしにする
+              fetch(BACKUP_WEBHOOK_URL, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              });
+            } catch (err) {
+              console.error("バックアップ送信エラー:", err);
+            }
+          };
+
           const analyzeCurrentImage = async () => {
             if (!userApiKey) return setShowSettings(true);
             if (!imageSrc) return;
@@ -334,6 +368,10 @@
                 };
                 return newList;
               });
+
+              // 監査用バックアップを裏側で送信
+              sendBackupToSpreadsheet(imageFiles[currentFileIndex].name, parsedData);
+
             } catch(err) {
               setError(`解析エラー: ${err.message}`);
             } finally {
@@ -341,22 +379,11 @@
             }
           };
 
-          const readFileAsBase64 = (file) => {
-            return new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result.split(',')[1]);
-              reader.onerror = reject;
-              reader.readAsDataURL(file);
-            });
-          };
-
           const openPageSelectModal = () => {
-            // モーダルを開く際、解析済みのページは自動でチェックを外す
             setSelectedPages(imageFiles.map((_, idx) => !extractedDataList[idx]?.isAnalyzed));
             setIsPageSelectModalOpen(true);
           };
 
-          // 選択されたページだけを一括解析
           const analyzeSelectedImages = async () => {
             setIsPageSelectModalOpen(false);
             if (!userApiKey) return setShowSettings(true);
@@ -364,7 +391,6 @@
             let errorOccurred = false;
 
             for (let i = 0; i < imageFiles.length; i++) {
-              // 選択されていない場合はスキップ（解析済みでも手動でチェックされていれば再処理する）
               if (!selectedPages[i]) continue; 
               
               setAnalyzingIndex(i);
@@ -385,6 +411,10 @@
                   };
                   return newList;
                 });
+
+                // 監査用バックアップを裏側で送信
+                sendBackupToSpreadsheet(imageFiles[i].name, parsedData);
+
                 await new Promise(resolve => setTimeout(resolve, 2000)); 
               } catch(err) {
                 setError(`[${imageFiles[i].name}] の解析でエラーが発生したため、連続処理を中断しました: ${err.message}`);
@@ -395,7 +425,6 @@
             setIsAnalyzingAll(false);
             setAnalyzingIndex(-1);
             if (!errorOccurred && imageFiles.length > 0) {
-               // 処理完了後、最初の未処理ページに戻る（なければ先頭）
                const nextUnanalyzed = extractedDataList.findIndex(d => !d.isAnalyzed);
                setCurrentFileIndex(nextUnanalyzed !== -1 ? nextUnanalyzed : 0);
             }
@@ -769,7 +798,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.11</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.12</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
