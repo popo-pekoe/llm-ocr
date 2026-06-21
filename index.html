@@ -610,7 +610,6 @@
           // ==========================================
           const calculatePagesForQuote = () => {
             const container = document.createElement('div');
-            // 計算用コンテナは画面外に隠しつつ、A4幅(210mm)で構築する
             container.style.cssText = 'position:absolute; left:-9999px; top:-9999px; width:210mm; background:#fff; visibility:hidden;';
             const style = document.createElement('style');
             style.innerHTML = `
@@ -639,8 +638,8 @@
 
             const escapeHtml = (str) => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             
-            // ★ A4の高さ限界(上下15mm余白を除く)を元の適正値(約980px)に戻す
-            const PAGE_HEIGHT_LIMIT = 980; 
+            // ★ 高さを適正値に調整し、1ページ目に確実な余裕を持たせる
+            const PAGE_HEIGHT_LIMIT = 850; 
             let pages = [];
             let pageCount = 0;
             
@@ -748,7 +747,6 @@
             return pages;
           };
 
-          // ★全体コピー機能
           const copyQuoteTSVToClipboard = () => {
             const escapeTSV = (str) => String(str || '').replace(/\t/g, ' ').replace(/\n/g, ' ');
             let tsvContent = `御見積書\n\n`;
@@ -780,7 +778,7 @@
             } catch (err) { setError("コピーに失敗しました。"); }
           };
 
-          // Excel出力用のHTML文字列組み立て
+          // ★ Excel出力の構造を抜本的に改善 (ページごとに独立したテーブルを作成し、間に改ページタグを挟む)
           const exportQuoteExcel = () => {
             const pages = calculatePagesForQuote();
             
@@ -788,28 +786,31 @@
             <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
             <head>
               <meta charset="utf-8">
-              <style>
-                /* Excel用の改ページ指定スタイル */
-                .pb { page-break-before: always; mso-page-break-before: always; }
-              </style>
               <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>御見積書</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
             </head>
             <body>`;
             
-            let tableHtml = `<table border="0" style="font-family: 'Meiryo', sans-serif; font-size: 11pt;">`;
-
             pages.forEach((page, pIdx) => {
               if (pIdx > 0) {
-                tableHtml += `
-                  <tr><td colspan="6" style="height: 30px;"></td></tr>
-                  <tr><td colspan="6" style="height: 30px;"></td></tr>
-                  <tr class="pb"><td colspan="6" style="height: 30px;"></td></tr>
-                  <tr><td colspan="6" style="height: 30px;"></td></tr>
-                `;
+                // ★ 確実にExcelで改ページを認識させるための単独タグ
+                htmlStr += `<br clear="all" style="mso-special-character:line-break; page-break-before:always" />`;
               }
               
+              htmlStr += `<table border="0" style="font-family: 'Meiryo', sans-serif; font-size: 11pt; width: 100%;">`;
+              // 列幅の固定
+              htmlStr += `
+                <colgroup>
+                  <col style="width: 5%;" />
+                  <col style="width: 40%;" />
+                  <col style="width: 10%;" />
+                  <col style="width: 10%;" />
+                  <col style="width: 15%;" />
+                  <col style="width: 20%;" />
+                </colgroup>
+              `;
+
               if (page.isFirst) {
-                tableHtml += `
+                htmlStr += `
                   <tr><td colspan="6" style="text-align: center; font-size: 18pt; font-weight: bold; border-bottom: 1px solid #000;">御見積書</td></tr>
                   <tr><td colspan="6"></td></tr>
                   <tr>
@@ -839,7 +840,7 @@
                   <tr><td colspan="6"></td></tr>
                 `;
               } else {
-                tableHtml += `
+                htmlStr += `
                   <tr>
                     <td colspan="3" style="font-weight: bold; font-size: 14pt;">御見積書 (${pIdx + 1}枚目)</td>
                     <td colspan="3" style="text-align: right;">発行日: ${quoteData.date || ''}</td>
@@ -856,7 +857,7 @@
                 `;
               }
 
-              tableHtml += `
+              htmlStr += `
                   <tr>
                     <th style="border: 1px solid #000; background-color: #f0f0f0;">No.</th>
                     <th style="border: 1px solid #000; background-color: #f0f0f0;">品名・仕様</th>
@@ -868,7 +869,7 @@
               `;
 
               page.items.forEach((item) => {
-                tableHtml += `
+                htmlStr += `
                   <tr>
                     <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${item.originalIndex + 1}</td>
                     <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000;">${item.name || ''}</td>
@@ -880,19 +881,20 @@
                 `;
               });
 
-              tableHtml += `<tr><td colspan="6" style="border-top: 1px solid #000;"></td></tr>`;
+              htmlStr += `<tr><td colspan="6" style="border-top: 1px solid #000;"></td></tr>`;
 
               if (page.hasSummary) {
-                tableHtml += `
+                htmlStr += `
                   <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">小計 (税抜)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTotalAmount.toLocaleString()}</td></tr>
                   <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">消費税 (10%)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTaxAmount.toLocaleString()}</td></tr>
                   <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">合計 (税込)</th><td style="border: 1px solid #000; text-align: right; font-weight: bold;">¥${quoteGrandTotal.toLocaleString()}</td></tr>
                 `;
               }
+              
+              htmlStr += `</table>`;
             });
 
-            tableHtml += `</table>`;
-            htmlStr += tableHtml + `</body></html>`;
+            htmlStr += `</body></html>`;
 
             const blob = new Blob([htmlStr], { type: 'application/vnd.ms-excel' });
             const url = URL.createObjectURL(blob);
@@ -918,22 +920,19 @@
                   body { font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; color: #000; margin: 0; padding: 0; background: #525659; }
                   #print-container { padding: 40px 0; }
                   
-                  /* ★ 画面プレビュー時のページ枠 (間隔を広げ、固定高さをやめる) */
+                  /* 画面プレビュー時のページ枠 (ページ間隔を広めに) */
                   .page { 
                     width: 210mm; 
                     min-height: 297mm; 
                     padding: 15mm; 
-                    margin: 0 auto 40px auto; 
+                    margin: 0 auto 60px auto; 
                     background: #fff; 
                     box-sizing: border-box; 
                     box-shadow: 0 0 10px rgba(0,0,0,0.5); 
                     position: relative; 
-                    page-break-after: always; 
-                    break-after: page;
                   }
-                  .page:last-child { page-break-after: auto; break-after: auto; margin-bottom: 0; }
                   
-                  /* ★ 印刷時の設定 (余計なスタイルを消し、確実に改ページさせる) */
+                  /* 印刷時の設定 */
                   @media print { 
                     body { background: none; } 
                     #print-container { padding: 0; } 
@@ -1244,7 +1243,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.28</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.29</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
