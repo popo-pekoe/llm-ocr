@@ -5,12 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI DocuExtract</title>
     
+    <!-- Tailwind CSS (デザイン用) -->
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- FontAwesome (アイコン用) -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- SheetJS (Excel出力用) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+    <!-- PDF.js (PDFの画像化用) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+    <!-- React本体 -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
 
     <style>
@@ -30,7 +41,7 @@
           return <i className={`fa-solid fa-${name} ${className}`} style={style}></i>;
         };
 
-        const BACKUP_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbynshM5lmV62v-nGQMLhECcIj8_C-n1Mf-zcSbfHUhJkYdGP2nIdlaSwiRyfXOXWigP/exec"; 
+        const BACKUP_WEBHOOK_URL = ""; 
 
         function App() {
           const [imageFiles, setImageFiles] = useState([]);
@@ -159,7 +170,7 @@
               window.removeEventListener('mousemove', handleMouseMove);
               window.removeEventListener('mouseup', handleMouseUp);
               window.removeEventListener('touchmove', handleMouseMove);
-              window.removeEventListener('touchmove', handleMouseUp);
+              window.removeEventListener('touchend', handleMouseUp);
             };
           }, [isDragging, resizeState]);
 
@@ -661,8 +672,8 @@
 
             const escapeHtml = (str) => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             
-            // ★ 高さを適正値に微調整し、1ページ目の余白を無駄なく利用する
-            const PAGE_HEIGHT_LIMIT = 940; 
+            // ★ 高さを約12%引き上げ、1ページ目の余白を無駄なく利用するように調整
+            const PAGE_HEIGHT_LIMIT = 1050; 
             let pages = [];
             let pageCount = 0;
             
@@ -956,6 +967,17 @@
                   .text-center { text-align: center; }
                   
                   .simple-header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #000; padding-bottom: 5px; margin-bottom: 15px; }
+                  
+                  /* ★ 全ページの下部中央に配置するフッター（ページ番号） */
+                  .page-footer {
+                    position: absolute;
+                    bottom: 10mm;
+                    left: 0;
+                    width: 100%;
+                    text-align: center;
+                    font-size: 12px;
+                    color: #555;
+                  }
                 </style>
               </head>
               <body>
@@ -993,7 +1015,7 @@
                 html += `
                   <div class="simple-header">
                     <div class="left-col">
-                      <div style="font-weight: bold; font-size: 14px; margin-bottom: 5px;">御見積書 (${pIdx + 1}枚目)</div>
+                      <div style="font-weight: bold; font-size: 14px; margin-bottom: 5px;">御見積書 (${pIdx + 1}/${pages.length})</div>
                       <div>宛名：${quoteData.recipient || ''} ${quoteData.honorific || ''}</div>
                       <div>工事名：${quoteData.project_name || ''}</div>
                     </div>
@@ -1038,6 +1060,9 @@
                   </div>
                 `;
               }
+
+              // ★ フッターとして現在のページと全体ページ数を表示
+              html += `<div class="page-footer">- ${pIdx + 1} / ${pages.length} -</div>`;
 
               html += `</div>`; 
             });
@@ -1225,7 +1250,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.33</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.34</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
