@@ -5,23 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI DocuExtract</title>
     
-    <!-- Tailwind CSS (デザイン用) -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- FontAwesome (アイコン用) -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <!-- SheetJS (Excel出力用) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-
-    <!-- PDF.js (PDFの画像化用) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-
-    <!-- React本体 -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
 
     <style>
@@ -170,7 +159,7 @@
               window.removeEventListener('mousemove', handleMouseMove);
               window.removeEventListener('mouseup', handleMouseUp);
               window.removeEventListener('touchmove', handleMouseMove);
-              window.removeEventListener('touchend', handleMouseUp);
+              window.removeEventListener('touchmove', handleMouseUp);
             };
           }, [isDragging, resizeState]);
 
@@ -525,7 +514,6 @@
               }
             });
 
-            // ★ 抽出元の合計金額の最大値を取得（アラート表示用）
             const originalTotal = Math.max(...analyzedDataList.map(d => d.total_amount || 0));
 
             setQuoteData({
@@ -540,12 +528,10 @@
                 let up = item.unit_price || 0;
                 let p = item.price || 0;
 
-                // ★ 金額だけ入っていて数量と単価が空欄(0)の場合、単価に金額を移し、数量は0とする
                 if (q === 0 && up === 0 && p !== 0) {
                   up = p;
                 }
 
-                // ★ 数量が0でも単価が入っていればそのまま金額に適用
                 let calcP = (q === 0 && up !== 0) ? up : (q * up);
 
                 return {
@@ -571,7 +557,6 @@
               if (field === 'quantity' || field === 'unit_price') {
                 const q = updatedItem.quantity || 0;
                 const up = updatedItem.unit_price || 0;
-                // ★ 数量0でも単価があれば金額とする
                 updatedItem.price = (q === 0 && up !== 0) ? up : (q * up);
               }
               if (field === 'unit_price') {
@@ -640,7 +625,6 @@
           const quoteTaxAmount = Math.floor(quoteTotalAmount * 0.1);
           const quoteGrandTotal = quoteTotalAmount + quoteTaxAmount;
 
-          // ★ 不一致アラート判定
           const originalTotal = quoteData.original_total || 0;
           const isTotalMismatch = originalTotal > 0 && quoteTotalAmount !== originalTotal && quoteGrandTotal !== originalTotal;
 
@@ -677,7 +661,8 @@
 
             const escapeHtml = (str) => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             
-            const PAGE_HEIGHT_LIMIT = 850; 
+            // ★ 高さを適正値に微調整し、1ページ目の余白を無駄なく利用する
+            const PAGE_HEIGHT_LIMIT = 940; 
             let pages = [];
             let pageCount = 0;
             
@@ -741,7 +726,6 @@
             
             quoteData.items.forEach((item, index) => {
               const tr = document.createElement('tr');
-              // ★出力時も数量0かつ単価ありの場合は'0'を表示する
               const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
               tr.innerHTML = `
                 <td style="text-align:center;">${index + 1}</td>
@@ -819,7 +803,6 @@
             } catch (err) { setError("コピーに失敗しました。"); }
           };
 
-          // Excel出力機能のロールバックとダイアログ表示
           const exportQuoteExcel = () => {
             alert("Excelファイルをダウンロードします。\n\n【印刷時のご注意】\n明細が多く複数ページにわたる場合は、ダウンロードしたExcelファイルを開き、『ページレイアウト』タブから『改ページの挿入』を行って区切り位置を調整してください。\nまたは、必要に応じて2ページ目以降の明細を別のシートへコピー＆ペーストして、印刷レイアウトを整えてください。");
 
@@ -1242,7 +1225,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.32</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.33</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
