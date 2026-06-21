@@ -5,12 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI DocuExtract</title>
     
+    <!-- Tailwind CSS (デザイン用) -->
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- FontAwesome (アイコン用) -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- SheetJS (Excel出力用) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+    <!-- PDF.js (PDFの画像化用) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+    <!-- React本体 -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
 
     <style>
@@ -606,7 +617,7 @@
           const quoteGrandTotal = quoteTotalAmount + quoteTaxAmount;
 
           // ==========================================
-          // PDF/Excel出力のための高度な改ページ計算ロジック
+          // PDF出力のための高度な改ページ計算ロジック
           // ==========================================
           const calculatePagesForQuote = () => {
             const container = document.createElement('div');
@@ -638,7 +649,6 @@
 
             const escapeHtml = (str) => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             
-            // ★ 高さを適正値に調整し、1ページ目に確実な余裕を持たせる
             const PAGE_HEIGHT_LIMIT = 850; 
             let pages = [];
             let pageCount = 0;
@@ -778,27 +788,12 @@
             } catch (err) { setError("コピーに失敗しました。"); }
           };
 
-          // ★ Excel出力の構造を抜本的に改善 (ページごとに独立したテーブルを作成し、間に改ページタグを挟む)
+          // ★ Excel出力機能のロールバックとダイアログ表示
           const exportQuoteExcel = () => {
-            const pages = calculatePagesForQuote();
-            
-            let htmlStr = `
-            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-            <head>
-              <meta charset="utf-8">
-              <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>御見積書</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
-            </head>
-            <body>`;
-            
-            pages.forEach((page, pIdx) => {
-              if (pIdx > 0) {
-                // ★ 確実にExcelで改ページを認識させるための単独タグ
-                htmlStr += `<br clear="all" style="mso-special-character:line-break; page-break-before:always" />`;
-              }
-              
-              htmlStr += `<table border="0" style="font-family: 'Meiryo', sans-serif; font-size: 11pt; width: 100%;">`;
-              // 列幅の固定
-              htmlStr += `
+            alert("Excelファイルをダウンロードします。\n\n【印刷時のご注意】\n明細が多く複数ページにわたる場合は、ダウンロードしたExcelファイルを開き、『ページレイアウト』タブから『改ページの挿入』を行って区切り位置を調整してください。\nまたは、必要に応じて2ページ目以降の明細を別のシートへコピー＆ペーストして、印刷レイアウトを整えてください。");
+
+            let tableHtml = `
+              <table border="0" style="font-family: 'Meiryo', sans-serif; font-size: 11pt; width: 100%;">
                 <colgroup>
                   <col style="width: 5%;" />
                   <col style="width: 40%;" />
@@ -807,94 +802,68 @@
                   <col style="width: 15%;" />
                   <col style="width: 20%;" />
                 </colgroup>
+                <tr><td colspan="6" style="text-align: center; font-size: 18pt; font-weight: bold; border-bottom: 1px solid #000;">御見積書</td></tr>
+                <tr><td colspan="6"></td></tr>
+                <tr>
+                  <td colspan="3" style="font-size: 14pt; border-bottom: 1px solid #000;">${quoteData.recipient || '　　　　　　　'} ${quoteData.honorific || ''}</td>
+                  <td colspan="3" style="text-align: right;">発行日: ${quoteData.date || ''}</td>
+                </tr>
+                <tr>
+                  <td colspan="3">下記の通り御見積申し上げます。</td>
+                  <td colspan="3" style="text-align: right; font-weight: bold; font-size: 12pt;">${myCompany.name || ''}</td>
+                </tr>
+                <tr>
+                  <td colspan="3" style="font-size: 16pt; font-weight: bold; border-bottom: 3px double #000;">御見積金額：¥${quoteGrandTotal.toLocaleString()} -</td>
+                  <td colspan="3" style="text-align: right;">〒${myCompany.zip || ''}</td>
+                </tr>
+                <tr>
+                  <td colspan="3">工事名: ${quoteData.project_name || ''}</td>
+                  <td colspan="3" style="text-align: right;">${myCompany.address || ''}</td>
+                </tr>
+                <tr>
+                  <td colspan="3">現場住所: ${quoteData.project_address || ''}</td>
+                  <td colspan="3" style="text-align: right;">TEL: ${myCompany.tel || ''}</td>
+                </tr>
+                <tr>
+                  <td colspan="3" style="font-size: 10pt; color: #555;">見積有効期限: 発行日より30日間</td>
+                  <td colspan="3" style="text-align: right;">担当: ${myCompany.person || ''}</td>
+                </tr>
+                <tr><td colspan="6"></td></tr>
+                <tr>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">No.</th>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">品名・仕様</th>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">数量</th>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">単位</th>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">単価</th>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">金額</th>
+                </tr>
+            `;
+
+            quoteData.items.forEach((item, idx) => {
+              tableHtml += `
+                <tr>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${idx + 1}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000;">${item.name || ''}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.quantity || ''}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${item.unit || ''}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.unit_price || ''}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.price || ''}</td>
+                </tr>
               `;
-
-              if (page.isFirst) {
-                htmlStr += `
-                  <tr><td colspan="6" style="text-align: center; font-size: 18pt; font-weight: bold; border-bottom: 1px solid #000;">御見積書</td></tr>
-                  <tr><td colspan="6"></td></tr>
-                  <tr>
-                    <td colspan="3" style="font-size: 14pt; border-bottom: 1px solid #000;">${quoteData.recipient || '　　　　　　　'} ${quoteData.honorific || ''}</td>
-                    <td colspan="3" style="text-align: right;">発行日: ${quoteData.date || ''}</td>
-                  </tr>
-                  <tr>
-                    <td colspan="3">下記の通り御見積申し上げます。</td>
-                    <td colspan="3" style="text-align: right; font-weight: bold; font-size: 12pt;">${myCompany.name || ''}</td>
-                  </tr>
-                  <tr>
-                    <td colspan="3" style="font-size: 16pt; font-weight: bold; border-bottom: 3px double #000;">御見積金額：¥${quoteGrandTotal.toLocaleString()} -</td>
-                    <td colspan="3" style="text-align: right;">〒${myCompany.zip || ''}</td>
-                  </tr>
-                  <tr>
-                    <td colspan="3">工事名: ${quoteData.project_name || ''}</td>
-                    <td colspan="3" style="text-align: right;">${myCompany.address || ''}</td>
-                  </tr>
-                  <tr>
-                    <td colspan="3">現場住所: ${quoteData.project_address || ''}</td>
-                    <td colspan="3" style="text-align: right;">TEL: ${myCompany.tel || ''}</td>
-                  </tr>
-                  <tr>
-                    <td colspan="3" style="font-size: 10pt; color: #555;">見積有効期限: 発行日より30日間</td>
-                    <td colspan="3" style="text-align: right;">担当: ${myCompany.person || ''}</td>
-                  </tr>
-                  <tr><td colspan="6"></td></tr>
-                `;
-              } else {
-                htmlStr += `
-                  <tr>
-                    <td colspan="3" style="font-weight: bold; font-size: 14pt;">御見積書 (${pIdx + 1}枚目)</td>
-                    <td colspan="3" style="text-align: right;">発行日: ${quoteData.date || ''}</td>
-                  </tr>
-                  <tr>
-                    <td colspan="3">宛名: ${quoteData.recipient || ''} ${quoteData.honorific || ''}</td>
-                    <td colspan="3" style="text-align: right; font-weight: bold;">${myCompany.name || ''}</td>
-                  </tr>
-                  <tr>
-                    <td colspan="3" style="border-bottom: 2px solid #000;">工事名: ${quoteData.project_name || ''}</td>
-                    <td colspan="3" style="border-bottom: 2px solid #000;"></td>
-                  </tr>
-                  <tr><td colspan="6"></td></tr>
-                `;
-              }
-
-              htmlStr += `
-                  <tr>
-                    <th style="border: 1px solid #000; background-color: #f0f0f0;">No.</th>
-                    <th style="border: 1px solid #000; background-color: #f0f0f0;">品名・仕様</th>
-                    <th style="border: 1px solid #000; background-color: #f0f0f0;">数量</th>
-                    <th style="border: 1px solid #000; background-color: #f0f0f0;">単位</th>
-                    <th style="border: 1px solid #000; background-color: #f0f0f0;">単価</th>
-                    <th style="border: 1px solid #000; background-color: #f0f0f0;">金額</th>
-                  </tr>
-              `;
-
-              page.items.forEach((item) => {
-                htmlStr += `
-                  <tr>
-                    <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${item.originalIndex + 1}</td>
-                    <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000;">${item.name || ''}</td>
-                    <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.quantity || ''}</td>
-                    <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${item.unit || ''}</td>
-                    <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.unit_price || ''}</td>
-                    <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.price || ''}</td>
-                  </tr>
-                `;
-              });
-
-              htmlStr += `<tr><td colspan="6" style="border-top: 1px solid #000;"></td></tr>`;
-
-              if (page.hasSummary) {
-                htmlStr += `
-                  <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">小計 (税抜)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTotalAmount.toLocaleString()}</td></tr>
-                  <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">消費税 (10%)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTaxAmount.toLocaleString()}</td></tr>
-                  <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">合計 (税込)</th><td style="border: 1px solid #000; text-align: right; font-weight: bold;">¥${quoteGrandTotal.toLocaleString()}</td></tr>
-                `;
-              }
-              
-              htmlStr += `</table>`;
             });
 
-            htmlStr += `</body></html>`;
+            tableHtml += `
+                <tr><td colspan="6" style="border-top: 1px solid #000;"></td></tr>
+                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">小計 (税抜)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTotalAmount.toLocaleString()}</td></tr>
+                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">消費税 (10%)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTaxAmount.toLocaleString()}</td></tr>
+                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">合計 (税込)</th><td style="border: 1px solid #000; text-align: right; font-weight: bold;">¥${quoteGrandTotal.toLocaleString()}</td></tr>
+              </table>
+            `;
+
+            const htmlStr = `
+            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+            <head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>御見積書</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head>
+            <body>${tableHtml}</body></html>`;
 
             const blob = new Blob([htmlStr], { type: 'application/vnd.ms-excel' });
             const url = URL.createObjectURL(blob);
@@ -902,7 +871,6 @@
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
           };
 
-          // ★ 見積書エディターからのPDF出力
           const printQuotePDF = () => {
             const printWindow = window.open('', '_blank');
             if (!printWindow) { setError("ポップアップがブロックされました。"); return; }
@@ -920,7 +888,6 @@
                   body { font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; color: #000; margin: 0; padding: 0; background: #525659; }
                   #print-container { padding: 40px 0; }
                   
-                  /* 画面プレビュー時のページ枠 (ページ間隔を広めに) */
                   .page { 
                     width: 210mm; 
                     min-height: 297mm; 
@@ -932,7 +899,6 @@
                     position: relative; 
                   }
                   
-                  /* 印刷時の設定 */
                   @media print { 
                     body { background: none; } 
                     #print-container { padding: 0; } 
@@ -1143,6 +1109,20 @@
             const worksheet = XLSX.utils.aoa_to_sheet(aoa); const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, worksheet, "抽出データ"); XLSX.writeFile(workbook, "extracted_documents_all.xlsx");
           };
 
+          const exportPDF = () => { 
+            const printWindow = window.open('', '_blank');
+            if (!printWindow) { setError("ポップアップがブロックされました。PDF出力するにはポップアップを許可してください。"); return; }
+            let html = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>抽出データ一覧 (PDF用)</title><style>body { font-family: sans-serif; font-size: 11px; padding: 15mm; color: #333; margin: 0; box-sizing: border-box;} table { border-collapse: collapse; width: 100%; margin-top: 20px; } th, td { border: 1px solid #ccc; padding: 6px; text-align: left; } th { background-color: #f8f9fa; font-weight: bold; } .text-right { text-align: right; } @media print { @page { margin: 0; size: landscape; } }</style></head><body><h2>抽出データ一覧</h2><table><thead><tr><th>ファイル名</th><th>書類種別</th><th>発行日</th><th>宛先</th><th>発行元</th><th>工事名</th><th>現場住所</th><th>合計金額</th><th>品名</th><th>数量</th><th>単位</th><th>単価</th><th>金額</th></tr></thead><tbody>`;
+            extractedDataList.forEach((data, index) => {
+              const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
+              if (data.items && data.items.length > 0) {
+                data.items.forEach(item => { html += `<tr><td>${fileName}</td><td>${data.document_type || ''}</td><td>${data.date || ''}</td><td>${data.recipient || ''}</td><td>${data.issuer || ''}</td><td>${data.project_name || ''}</td><td>${data.project_address || ''}</td><td class="text-right">${data.total_amount || 0}</td><td>${item.name || ''}</td><td class="text-right">${item.quantity || 0}</td><td>${item.unit || ''}</td><td class="text-right">${item.unit_price || 0}</td><td class="text-right">${item.price || 0}</td></tr>`; });
+              } else { html += `<tr><td>${fileName}</td><td>${data.document_type || ''}</td><td>${data.date || ''}</td><td>${data.recipient || ''}</td><td>${data.issuer || ''}</td><td>${data.project_name || ''}</td><td>${data.project_address || ''}</td><td class="text-right">${data.total_amount || 0}</td><td></td><td></td><td></td><td></td><td></td></tr>`; }
+            });
+            html += `</tbody></table><script>window.onload = function() { setTimeout(function() { window.print(); setTimeout(function() { window.close(); }, 500); }, 500); };<\/script></body></html>`;
+            printWindow.document.write(html); printWindow.document.close();
+          };
+
           const copyTSVToClipboard = () => { 
             const tsvContent = generateTSVContent();
             try {
@@ -1243,7 +1223,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.29</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.31</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -1341,6 +1321,7 @@
                       <FaIcon name="file-invoice" className="text-indigo-600"/> 御見積書の作成
                     </h2>
                     <div className="flex gap-2">
+                        {/* ★ PDFボタンを復活させ、Excel出力はシンプル版を使用 */}
                         <button onClick={exportQuoteExcel} className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold shadow-sm text-sm">
                           <FaIcon name="file-excel"/> Excel形式で保存 (.xls)
                         </button>
