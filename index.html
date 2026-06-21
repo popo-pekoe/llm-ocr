@@ -5,23 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI DocuExtract</title>
     
-    <!-- Tailwind CSS (デザイン用) -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- FontAwesome (アイコン用) -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <!-- SheetJS (Excel出力用) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-
-    <!-- PDF.js (PDFの画像化用) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-
-    <!-- React本体 -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
 
     <style>
@@ -621,7 +610,8 @@
           // ==========================================
           const calculatePagesForQuote = () => {
             const container = document.createElement('div');
-            container.style.cssText = 'position:absolute; left:-9999px; top:-9999px; width:210mm; background:#fff;';
+            // 計算用コンテナは画面外に隠しつつ、A4幅(210mm)で構築する
+            container.style.cssText = 'position:absolute; left:-9999px; top:-9999px; width:210mm; background:#fff; visibility:hidden;';
             const style = document.createElement('style');
             style.innerHTML = `
               .calc-page { width: 210mm; padding: 15mm; font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; box-sizing: border-box; }
@@ -649,8 +639,8 @@
 
             const escapeHtml = (str) => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             
-            // ★ A4の高さ限界(余白除く)を大幅に下げて1ページ目に余裕を持たせる
-            const PAGE_HEIGHT_LIMIT = 750; 
+            // ★ A4の高さ限界(上下15mm余白を除く)を元の適正値(約980px)に戻す
+            const PAGE_HEIGHT_LIMIT = 980; 
             let pages = [];
             let pageCount = 0;
             
@@ -790,7 +780,7 @@
             } catch (err) { setError("コピーに失敗しました。"); }
           };
 
-          // ★ 高度な改ページ計算結果を利用して、Excel出力用のHTML文字列を組み立てる
+          // Excel出力用のHTML文字列組み立て
           const exportQuoteExcel = () => {
             const pages = calculatePagesForQuote();
             
@@ -810,7 +800,6 @@
 
             pages.forEach((page, pIdx) => {
               if (pIdx > 0) {
-                // ★ Excelでの出力時にページ間の隙間と改ページを強制する
                 tableHtml += `
                   <tr><td colspan="6" style="height: 30px;"></td></tr>
                   <tr><td colspan="6" style="height: 30px;"></td></tr>
@@ -911,7 +900,7 @@
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
           };
 
-          // ★ 見積書エディターからのPDF出力 (計算ロジックをExcelと共通化、印刷用CSS強化)
+          // ★ 見積書エディターからのPDF出力
           const printQuotePDF = () => {
             const printWindow = window.open('', '_blank');
             if (!printWindow) { setError("ポップアップがブロックされました。"); return; }
@@ -927,13 +916,24 @@
                 <style>
                   @page { size: A4 portrait; margin: 0; }
                   body { font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; color: #000; margin: 0; padding: 0; background: #525659; }
-                  #print-container { padding: 20px 0; }
+                  #print-container { padding: 40px 0; }
                   
-                  /* 画面プレビュー時のページ枠 */
-                  .page { width: 210mm; height: 297mm; padding: 15mm; margin: 0 auto 20px auto; background: #fff; box-sizing: border-box; box-shadow: 0 0 10px rgba(0,0,0,0.5); position: relative; overflow: hidden; page-break-after: always; }
-                  .page:last-child { page-break-after: auto; margin-bottom: 0; }
+                  /* ★ 画面プレビュー時のページ枠 (間隔を広げ、固定高さをやめる) */
+                  .page { 
+                    width: 210mm; 
+                    min-height: 297mm; 
+                    padding: 15mm; 
+                    margin: 0 auto 40px auto; 
+                    background: #fff; 
+                    box-sizing: border-box; 
+                    box-shadow: 0 0 10px rgba(0,0,0,0.5); 
+                    position: relative; 
+                    page-break-after: always; 
+                    break-after: page;
+                  }
+                  .page:last-child { page-break-after: auto; break-after: auto; margin-bottom: 0; }
                   
-                  /* 印刷時の設定（ここで不要な高さ制限を外し、自動改ページを適用） */
+                  /* ★ 印刷時の設定 (余計なスタイルを消し、確実に改ページさせる) */
                   @media print { 
                     body { background: none; } 
                     #print-container { padding: 0; } 
@@ -941,10 +941,9 @@
                       margin: 0; 
                       box-shadow: none; 
                       border: none; 
-                      height: auto !important; 
-                      overflow: visible !important; 
+                      min-height: 0;
                       page-break-after: always; 
-                      break-after: page; 
+                      break-after: page;
                     } 
                     .page:last-child {
                       page-break-after: auto;
@@ -962,16 +961,20 @@
                   .info-value { flex: 1; }
                   .total-box { margin-top: 20px; font-size: 18px; font-weight: bold; border-bottom: 3px double #000; display: inline-block; padding: 5px 20px 5px 0; }
                   .company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; }
+                  
                   table.items { width: 100%; border-collapse: collapse; border: 1px solid #000; margin-bottom: 10px;}
                   table.items th, table.items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 4px 6px; word-break: break-all; }
                   table.items th { background-color: #f5f5f5; text-align: center; border-bottom: 1px solid #000; border-top: 1px solid #000; }
                   table.items tbody tr:last-child td { border-bottom: 1px solid #000; }
+                  
                   .summary-table { width: 35%; border-collapse: collapse; border: 1px solid #000; margin-top: 10px; float: right; }
                   .summary-table th, .summary-table td { border: 1px solid #000; padding: 4px 6px; }
                   .summary-table th { background: #f5f5f5; text-align: center; width: 40%; }
                   .summary-table td { text-align: right; }
+                  
                   .text-right { text-align: right; }
                   .text-center { text-align: center; }
+                  
                   .simple-header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #000; padding-bottom: 5px; margin-bottom: 15px; }
                 </style>
               </head>
@@ -1241,7 +1244,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.27</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.28</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -1488,6 +1491,7 @@
                 </div>
               )}
 
+              {/* 以下ページ選択モーダル */}
               {isPageSelectModalOpen && (
                 <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                   <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
