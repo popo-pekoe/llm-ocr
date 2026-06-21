@@ -247,6 +247,21 @@
             return newFiles;
           };
 
+          const handleUploadBtnClick = () => {
+            setIsUploading(true);
+            setTimeout(() => {
+              if (fileInputRef.current) fileInputRef.current.click();
+              
+              const handleFocus = () => {
+                setTimeout(() => {
+                  setIsUploading(false);
+                }, 500); 
+                window.removeEventListener('focus', handleFocus);
+              };
+              window.addEventListener('focus', handleFocus);
+            }, 50);
+          };
+
           const handleImageUpload = async (e) => {
             const files = Array.from(e.target.files);
             if (files.length === 0) return;
@@ -291,6 +306,15 @@
               setImageSrc(null);
             }
           }, [currentFileIndex, imageFiles]);
+
+          const readFileAsBase64 = (file) => {
+            return new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result.split(',')[1]);
+              reader.onerror = reject;
+              reader.readAsDataURL(file);
+            });
+          };
 
           const analyzeImageCore = async (base64Data, mimeType, apiKey) => {
             const payload = {
@@ -486,8 +510,11 @@
           const openQuoteEditor = () => {
             const base = extractedDataList[currentFileIndex];
             if (!base) return;
+
             setQuoteSettings(prev => ({...prev, multiplier: 100}));
+
             const baseItems = base.items || [];
+
             setQuoteData({
               recipient: base.issuer || base.recipient || '',
               honorific: '御中',
@@ -586,7 +613,7 @@
             tsvContent += `工事名\t${escapeTSV(quoteData.project_name)}\n`;
             tsvContent += `現場住所\t${escapeTSV(quoteData.project_address)}\n`;
             tsvContent += `発行日\t${escapeTSV(quoteData.date)}\n`;
-            tsvContent += `有効期限\t発行日より30日間\n\n`; // ★有効期限を追加
+            tsvContent += `有効期限\t発行日より30日間\n\n`;
             
             tsvContent += `自社情報\n`;
             tsvContent += `会社名\t${escapeTSV(myCompany.name)}\n`;
@@ -693,8 +720,8 @@
                 <meta charset="UTF-8">
                 <title>御見積書</title>
                 <style>
-                  @page { size: A4 portrait; margin: 15mm; }
-                  body { font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; color: #000; margin: 0; padding: 0; }
+                  @page { size: A4 portrait; margin: 0; }
+                  body { font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; color: #000; margin: 0; padding: 15mm; box-sizing: border-box; }
                   table.main-table { width: 100%; border-collapse: collapse; }
                   table.main-table > thead > tr > td { border: none; padding: 0; }
                   table.main-table > tbody > tr > td { border: none; padding: 0; }
@@ -807,8 +834,6 @@
             printWindow.document.close();
           };
 
-          // ==========================================
-
           const generateCSVContent = () => { 
             const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
             let csvContent = "ファイル名,書類種別,発行日,宛先,発行元,工事名,現場住所,合計金額,品名,数量,単位,単価,金額\n";
@@ -881,7 +906,7 @@
           const exportPDF = () => { 
             const printWindow = window.open('', '_blank');
             if (!printWindow) { setError("ポップアップがブロックされました。PDF出力するにはポップアップを許可してください。"); return; }
-            let html = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>抽出データ一覧 (PDF用)</title><style>body { font-family: sans-serif; font-size: 11px; padding: 20px; color: #333; } table { border-collapse: collapse; width: 100%; margin-top: 20px; } th, td { border: 1px solid #ccc; padding: 6px; text-align: left; } th { background-color: #f8f9fa; font-weight: bold; } .text-right { text-align: right; } @media print { @page { margin: 15mm; size: landscape; } }</style></head><body><h2>抽出データ一覧</h2><table><thead><tr><th>ファイル名</th><th>書類種別</th><th>発行日</th><th>宛先</th><th>発行元</th><th>工事名</th><th>現場住所</th><th>合計金額</th><th>品名</th><th>数量</th><th>単位</th><th>単価</th><th>金額</th></tr></thead><tbody>`;
+            let html = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>抽出データ一覧 (PDF用)</title><style>body { font-family: sans-serif; font-size: 11px; padding: 15mm; color: #333; margin: 0; box-sizing: border-box;} table { border-collapse: collapse; width: 100%; margin-top: 20px; } th, td { border: 1px solid #ccc; padding: 6px; text-align: left; } th { background-color: #f8f9fa; font-weight: bold; } .text-right { text-align: right; } @media print { @page { margin: 0; size: landscape; } }</style></head><body><h2>抽出データ一覧</h2><table><thead><tr><th>ファイル名</th><th>書類種別</th><th>発行日</th><th>宛先</th><th>発行元</th><th>工事名</th><th>現場住所</th><th>合計金額</th><th>品名</th><th>数量</th><th>単位</th><th>単価</th><th>金額</th></tr></thead><tbody>`;
             extractedDataList.forEach((data, index) => {
               const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
               if (data.items && data.items.length > 0) {
@@ -900,16 +925,10 @@
             } catch (err) { setError("クリップボードへのコピーに失敗しました。"); }
           };
 
-          // ★ カラム幅変更のハンドルを視覚的に分かりやすく変更
           const renderResizableHeader = (label, colKey) => (
             <th className="p-2 font-bold relative group pr-5" style={{ width: columnWidths[colKey] }}>
               {label}
-              <div 
-                className="absolute right-0 top-0 h-full w-5 flex items-center justify-center cursor-col-resize z-10 text-gray-300 group-hover:text-blue-500 transition-colors bg-gradient-to-l from-gray-50/50 to-transparent"
-                onMouseDown={(e) => startResize(e, colKey)} 
-                onTouchStart={(e) => startResize(e, colKey)}
-                title="幅を調整"
-              >
+              <div className="absolute right-0 top-0 h-full w-5 flex items-center justify-center cursor-col-resize z-10 text-gray-300 group-hover:text-blue-500 transition-colors bg-gradient-to-l from-gray-50/50 to-transparent" onMouseDown={(e) => startResize(e, colKey)} onTouchStart={(e) => startResize(e, colKey)} >
                 <FaIcon name="grip-lines-vertical" size={10} />
               </div>
             </th>
@@ -998,7 +1017,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.22</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.23</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -1016,7 +1035,6 @@
                       {isExportMenuOpen && (
                         <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden z-50">
                           <div className="py-1">
-                            {/* 見積書作成ボタン */}
                             <button onClick={() => { openQuoteEditor(); setIsExportMenuOpen(false); }} disabled={!extractedData.isAnalyzed} className="w-full text-left px-4 py-3 text-sm text-indigo-700 hover:bg-indigo-50 flex items-center gap-3 transition-colors border-b-2 border-indigo-100 disabled:opacity-50">
                               <FaIcon name="file-invoice" className="text-indigo-600 w-5 text-center" size={18} />
                               <div>
@@ -1041,7 +1059,7 @@
                 <div className="mb-6 bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-wrap justify-between items-center gap-4">
                   <div className="flex flex-wrap items-center gap-4">
                     <input type="file" multiple accept="image/*,application/pdf" onChange={handleImageUpload} ref={fileInputRef} className="hidden" />
-                    <button onClick={() => fileInputRef.current?.click()} disabled={loading || isUploading} className="flex items-center gap-2 px-4 py-2 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 font-medium text-gray-700 disabled:opacity-50">
+                    <button onClick={handleUploadBtnClick} disabled={loading || isUploading} className="flex items-center gap-2 px-4 py-2 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 font-medium text-gray-700 disabled:opacity-50">
                       <FaIcon name={isUploading ? "spinner" : "upload"} size={16} className={isUploading ? "fa-spin" : ""} /> 
                       {isUploading ? '読み込み中...' : (imageFiles.length > 0 ? `${imageFiles.length}枚のファイルを読込済み` : '画像/PDFを選択(複数可)')}
                     </button>
@@ -1161,7 +1179,6 @@
                            <div><label className="block text-xs font-bold text-gray-500 mb-1">工事名・件名</label><input type="text" value={quoteData.project_name} onChange={e => handleQuoteInputChange('project_name', e.target.value)} className="w-full p-2 border border-gray-300 rounded outline-none" /></div>
                            <div><label className="block text-xs font-bold text-gray-500 mb-1">現場住所</label><input type="text" value={quoteData.project_address} onChange={e => handleQuoteInputChange('project_address', e.target.value)} className="w-full p-2 border border-gray-300 rounded outline-none" /></div>
                            <div><label className="block text-xs font-bold text-gray-500 mb-1">発行日</label><input type="text" value={quoteData.date} onChange={e => handleQuoteInputChange('date', e.target.value)} className="w-full p-2 border border-gray-300 rounded outline-none" /></div>
-                           {/* ★注記の追加 */}
                            <p className="text-[10px] text-gray-400 mt-2">※見積有効期限は「発行日より30日間」として印字されます。</p>
                          </div>
                        </div>
