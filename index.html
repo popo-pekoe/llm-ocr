@@ -508,9 +508,6 @@
             dragItemIndex.current = null; dragOverItemIndex.current = null;
           };
 
-          // ==========================================
-          // ★見積書作成エディタ機能★
-          // ==========================================
           const openQuoteEditor = () => {
             const analyzedDataList = extractedDataList.filter(d => d.isAnalyzed);
             if (analyzedDataList.length === 0) {
@@ -652,7 +649,8 @@
 
             const escapeHtml = (str) => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             
-            const PAGE_HEIGHT_LIMIT = 980; // A4の高さ限界(余白除く)
+            // ★ A4の高さ限界(余白除く)を大幅に下げて1ページ目に余裕を持たせる
+            const PAGE_HEIGHT_LIMIT = 750; 
             let pages = [];
             let pageCount = 0;
             
@@ -795,13 +793,28 @@
           // ★ 高度な改ページ計算結果を利用して、Excel出力用のHTML文字列を組み立てる
           const exportQuoteExcel = () => {
             const pages = calculatePagesForQuote();
+            
+            let htmlStr = `
+            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+            <head>
+              <meta charset="utf-8">
+              <style>
+                /* Excel用の改ページ指定スタイル */
+                .pb { page-break-before: always; mso-page-break-before: always; }
+              </style>
+              <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>御見積書</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+            </head>
+            <body>`;
+            
             let tableHtml = `<table border="0" style="font-family: 'Meiryo', sans-serif; font-size: 11pt;">`;
 
             pages.forEach((page, pIdx) => {
               if (pIdx > 0) {
-                // Excel用の強制改ページタグと少しの余白を挿入
+                // ★ Excelでの出力時にページ間の隙間と改ページを強制する
                 tableHtml += `
-                  <br clear="all" style="mso-special-character:line-break; page-break-before:always">
+                  <tr><td colspan="6" style="height: 30px;"></td></tr>
+                  <tr><td colspan="6" style="height: 30px;"></td></tr>
+                  <tr class="pb"><td colspan="6" style="height: 30px;"></td></tr>
                   <tr><td colspan="6" style="height: 30px;"></td></tr>
                 `;
               }
@@ -837,7 +850,6 @@
                   <tr><td colspan="6"></td></tr>
                 `;
               } else {
-                // 2ページ目以降の簡易ヘッダー
                 tableHtml += `
                   <tr>
                     <td colspan="3" style="font-weight: bold; font-size: 14pt;">御見積書 (${pIdx + 1}枚目)</td>
@@ -891,11 +903,7 @@
             });
 
             tableHtml += `</table>`;
-
-            const htmlStr = `
-            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-            <head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>御見積書</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head>
-            <body>${tableHtml}</body></html>`;
+            htmlStr += tableHtml + `</body></html>`;
 
             const blob = new Blob([htmlStr], { type: 'application/vnd.ms-excel' });
             const url = URL.createObjectURL(blob);
@@ -903,7 +911,7 @@
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
           };
 
-          // ★ 見積書エディターからのPDF出力 (計算ロジックをExcelと共通化)
+          // ★ 見積書エディターからのPDF出力 (計算ロジックをExcelと共通化、印刷用CSS強化)
           const printQuotePDF = () => {
             const printWindow = window.open('', '_blank');
             if (!printWindow) { setError("ポップアップがブロックされました。"); return; }
@@ -920,9 +928,29 @@
                   @page { size: A4 portrait; margin: 0; }
                   body { font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; color: #000; margin: 0; padding: 0; background: #525659; }
                   #print-container { padding: 20px 0; }
+                  
+                  /* 画面プレビュー時のページ枠 */
                   .page { width: 210mm; height: 297mm; padding: 15mm; margin: 0 auto 20px auto; background: #fff; box-sizing: border-box; box-shadow: 0 0 10px rgba(0,0,0,0.5); position: relative; overflow: hidden; page-break-after: always; }
                   .page:last-child { page-break-after: auto; margin-bottom: 0; }
-                  @media print { body { background: none; } #print-container { padding: 0; } .page { margin: 0; box-shadow: none; border: none; } }
+                  
+                  /* 印刷時の設定（ここで不要な高さ制限を外し、自動改ページを適用） */
+                  @media print { 
+                    body { background: none; } 
+                    #print-container { padding: 0; } 
+                    .page { 
+                      margin: 0; 
+                      box-shadow: none; 
+                      border: none; 
+                      height: auto !important; 
+                      overflow: visible !important; 
+                      page-break-after: always; 
+                      break-after: page; 
+                    } 
+                    .page:last-child {
+                      page-break-after: auto;
+                      break-after: auto;
+                    }
+                  }
                   
                   .title { text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 8px; margin-bottom: 15px; }
                   .header-wrap { display: flex; justify-content: space-between; margin-bottom: 15px; }
@@ -1027,7 +1055,7 @@
                 `;
               }
 
-              html += `</div>`; // .page の閉じタグ
+              html += `</div>`; 
             });
 
             html += `
@@ -1213,7 +1241,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.26</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.27</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -1460,7 +1488,6 @@
                 </div>
               )}
 
-              {/* 以下ページ選択モーダル */}
               {isPageSelectModalOpen && (
                 <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                   <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
