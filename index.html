@@ -709,11 +709,144 @@
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
           };
 
+          // ★ 見積書エディターからのPDF出力：JavaScriptによる高度な改ページ制御
           const printQuotePDF = () => {
             const printWindow = window.open('', '_blank');
             if (!printWindow) { setError("ポップアップがブロックされました。"); return; }
             
-            let html = `
+            // スクリプトのロジックを関数として定義（Babelによるパースエラーを防ぐため）
+            const printLogicFn = function(quoteData, myCompany, quoteTotalAmount, quoteTaxAmount, quoteGrandTotal) {
+              const PAGE_HEIGHT_LIMIT = 980; 
+              const container = document.getElementById('print-container');
+              let pageCount = 0;
+              
+              function escapeHtml(str) {
+                if (!str) return '';
+                return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+              }
+
+              function createNewPage(isFirstPage) {
+                pageCount++;
+                const pageDiv = document.createElement('div');
+                pageDiv.className = 'page';
+                
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'page-content';
+                
+                if (isFirstPage) {
+                  contentDiv.innerHTML = 
+                    '<div class="title">御見積書</div>' +
+                    '<div class="header-wrap">' +
+                      '<div class="left-col">' +
+                        '<div class="recipient">' + escapeHtml(quoteData.recipient || '　　　　　　　　　　') + ' ' + escapeHtml(quoteData.honorific || '') + '</div>' +
+                        '<div>下記の通り御見積申し上げます。</div>' +
+                        '<div class="total-box">御見積金額：¥' + quoteGrandTotal.toLocaleString() + ' - (税込)</div>' +
+                        '<div style="margin-top: 10px;">' +
+                          '<div class="info-row"><div class="info-label">工事名：</div><div class="info-value">' + escapeHtml(quoteData.project_name || '') + '</div></div>' +
+                          '<div class="info-row"><div class="info-label">現場住所：</div><div class="info-value">' + escapeHtml(quoteData.project_address || '') + '</div></div>' +
+                          '<div class="info-row" style="margin-top: 6px;"><div class="info-label" style="font-size: 10px; color: #555;">有効期限：</div><div class="info-value" style="font-size: 10px; color: #555;">発行日より30日間</div></div>' +
+                        '</div>' +
+                      '</div>' +
+                      '<div class="right-col">' +
+                        '<div style="margin-bottom: 10px;">発行日：' + escapeHtml(quoteData.date || '') + '</div>' +
+                        '<div class="company-name">' + escapeHtml(myCompany.name || '') + '</div>' +
+                        '<div>〒' + escapeHtml(myCompany.zip || '') + '</div>' +
+                        '<div>' + escapeHtml(myCompany.address || '') + '</div>' +
+                        '<div>TEL：' + escapeHtml(myCompany.tel || '') + '</div>' +
+                        '<div style="margin-top: 5px;">担当：' + escapeHtml(myCompany.person || '') + '</div>' +
+                      '</div>' +
+                    '</div>';
+                } else {
+                  contentDiv.innerHTML = 
+                    '<div class="simple-header">' +
+                      '<div class="left-col">' +
+                        '<div style="font-weight: bold; font-size: 14px; margin-bottom: 5px;">御見積書 (' + pageCount + '枚目)</div>' +
+                        '<div>宛名：' + escapeHtml(quoteData.recipient || '') + ' ' + escapeHtml(quoteData.honorific || '') + '</div>' +
+                        '<div>工事名：' + escapeHtml(quoteData.project_name || '') + '</div>' +
+                      '</div>' +
+                      '<div class="right-col">' +
+                        '<div>発行日：' + escapeHtml(quoteData.date || '') + '</div>' +
+                        '<div style="font-weight: bold;">' + escapeHtml(myCompany.name || '') + '</div>' +
+                      '</div>' +
+                    '</div>';
+                }
+                
+                pageDiv.appendChild(contentDiv);
+                container.appendChild(pageDiv);
+                return contentDiv;
+              }
+
+              function createTable(parentDiv) {
+                const table = document.createElement('table');
+                table.className = 'items';
+                table.innerHTML = 
+                  '<thead>' +
+                    '<tr>' +
+                      '<th style="width: 5%;">No</th>' +
+                      '<th style="width: 40%;">品名・仕様</th>' +
+                      '<th style="width: 10%;">数量</th>' +
+                      '<th style="width: 10%;">単位</th>' +
+                      '<th style="width: 15%;">単価</th>' +
+                      '<th style="width: 20%;">金額</th>' +
+                    '</tr>' +
+                  '</thead>' +
+                  '<tbody></tbody>';
+                parentDiv.appendChild(table);
+                return table.querySelector('tbody');
+              }
+
+              let currentPage = createNewPage(true);
+              let currentTableBody = createTable(currentPage);
+              
+              quoteData.items.forEach(function(item, index) {
+                const tr = document.createElement('tr');
+                const priceText = item.price ? '¥' + item.price.toLocaleString() : '';
+                const unitPriceText = item.unit_price ? '¥' + item.unit_price.toLocaleString() : '';
+                const quantityText = item.quantity ? item.quantity : '';
+                
+                tr.innerHTML = 
+                  '<td class="text-center">' + (index + 1) + '</td>' +
+                  '<td>' + escapeHtml(item.name || '') + '</td>' +
+                  '<td class="text-right">' + escapeHtml(quantityText) + '</td>' +
+                  '<td class="text-center">' + escapeHtml(item.unit || '') + '</td>' +
+                  '<td class="text-right">' + escapeHtml(unitPriceText) + '</td>' +
+                  '<td class="text-right">' + escapeHtml(priceText) + '</td>';
+                
+                currentTableBody.appendChild(tr);
+                
+                if (currentPage.offsetHeight > PAGE_HEIGHT_LIMIT) {
+                  currentTableBody.removeChild(tr); 
+                  
+                  currentPage = createNewPage(false); 
+                  currentTableBody = createTable(currentPage);
+                  currentTableBody.appendChild(tr); 
+                }
+              });
+
+              const summaryDiv = document.createElement('div');
+              summaryDiv.style.cssText = "clear: both; overflow: hidden;";
+              summaryDiv.innerHTML = 
+                '<table class="summary-table">' +
+                  '<tr><th>小計 (税抜)</th><td>¥' + quoteTotalAmount.toLocaleString() + '</td></tr>' +
+                  '<tr><th>消費税 (10%)</th><td>¥' + quoteTaxAmount.toLocaleString() + '</td></tr>' +
+                  '<tr><th>合計 (税込)</th><td style="font-weight: bold; font-size: 14px;">¥' + quoteGrandTotal.toLocaleString() + '</td></tr>' +
+                '</table>';
+              
+              currentPage.appendChild(summaryDiv);
+              
+              if (currentPage.offsetHeight > PAGE_HEIGHT_LIMIT) {
+                currentPage.removeChild(summaryDiv);
+                currentPage = createNewPage(false);
+                currentPage.appendChild(summaryDiv);
+              }
+
+              setTimeout(function() { 
+                window.print(); 
+                setTimeout(function() { window.close(); }, 500); 
+              }, 500);
+            };
+
+            const html = `
               <!DOCTYPE html>
               <html lang="ja">
               <head>
@@ -721,10 +854,28 @@
                 <title>御見積書</title>
                 <style>
                   @page { size: A4 portrait; margin: 0; }
-                  body { font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; color: #000; margin: 0; padding: 15mm; box-sizing: border-box; }
-                  table.main-table { width: 100%; border-collapse: collapse; }
-                  table.main-table > thead > tr > td { border: none; padding: 0; }
-                  table.main-table > tbody > tr > td { border: none; padding: 0; }
+                  body { font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; color: #000; margin: 0; padding: 0; background: #525659; }
+                  #print-container { padding: 20px 0; }
+                  
+                  .page { 
+                    width: 210mm; 
+                    height: 297mm; 
+                    padding: 15mm; 
+                    margin: 0 auto 20px auto; 
+                    background: #fff; 
+                    box-sizing: border-box; 
+                    box-shadow: 0 0 10px rgba(0,0,0,0.5); 
+                    position: relative; 
+                    overflow: hidden; 
+                    page-break-after: always; 
+                  }
+                  .page:last-child { page-break-after: auto; margin-bottom: 0; }
+                  
+                  @media print {
+                    body { background: none; }
+                    #print-container { padding: 0; }
+                    .page { margin: 0; box-shadow: none; border: none; }
+                  }
                   
                   .title { text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 8px; margin-bottom: 15px; }
                   .header-wrap { display: flex; justify-content: space-between; margin-bottom: 15px; }
@@ -737,8 +888,8 @@
                   .total-box { margin-top: 20px; font-size: 18px; font-weight: bold; border-bottom: 3px double #000; display: inline-block; padding: 5px 20px 5px 0; }
                   .company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; }
                   
-                  table.items { width: 100%; border-collapse: collapse; border: 1px solid #000;}
-                  table.items th, table.items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 4px 6px; }
+                  table.items { width: 100%; border-collapse: collapse; border: 1px solid #000; margin-bottom: 10px;}
+                  table.items th, table.items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 4px 6px; word-break: break-all; }
                   table.items th { background-color: #f5f5f5; text-align: center; border-bottom: 1px solid #000; border-top: 1px solid #000; }
                   table.items tbody tr:last-child td { border-bottom: 1px solid #000; }
                   
@@ -749,83 +900,21 @@
                   
                   .text-right { text-align: right; }
                   .text-center { text-align: center; }
+                  
+                  .simple-header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #000; padding-bottom: 5px; margin-bottom: 15px; }
                 </style>
               </head>
               <body>
-                <table class="main-table">
-                  <thead>
-                    <tr>
-                      <td>
-                        <div class="title">御見積書</div>
-                        <div class="header-wrap">
-                          <div class="left-col">
-                            <div class="recipient">${quoteData.recipient || '　　　　　　　　　　'} ${quoteData.honorific || ''}</div>
-                            <div>下記の通り御見積申し上げます。</div>
-                            <div class="total-box">御見積金額：¥${quoteGrandTotal.toLocaleString()} - (税込)</div>
-                            <div style="margin-top: 10px;">
-                              <div class="info-row"><div class="info-label">工事名：</div><div class="info-value">${quoteData.project_name || ''}</div></div>
-                              <div class="info-row"><div class="info-label">現場住所：</div><div class="info-value">${quoteData.project_address || ''}</div></div>
-                              <div class="info-row" style="margin-top: 6px;"><div class="info-label" style="font-size: 10px; color: #555;">有効期限：</div><div class="info-value" style="font-size: 10px; color: #555;">発行日より30日間</div></div>
-                            </div>
-                          </div>
-                          <div class="right-col">
-                            <div style="margin-bottom: 10px;">発行日：${quoteData.date || ''}</div>
-                            <div class="company-name">${myCompany.name || ''}</div>
-                            <div>〒${myCompany.zip || ''}</div>
-                            <div>${myCompany.address || ''}</div>
-                            <div>TEL：${myCompany.tel || ''}</div>
-                            <div style="margin-top: 5px;">担当：${myCompany.person || ''}</div>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td>
-                        <table class="items">
-                          <thead>
-                            <tr>
-                              <th style="width: 5%;">No</th>
-                              <th style="width: 40%;">品名・仕様</th>
-                              <th style="width: 10%;">数量</th>
-                              <th style="width: 10%;">単位</th>
-                              <th style="width: 15%;">単価</th>
-                              <th style="width: 20%;">金額</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            ${quoteData.items.map((item, index) => {
-                              const priceText = item.price ? `¥${item.price.toLocaleString()}` : '';
-                              const unitPriceText = item.unit_price ? `¥${item.unit_price.toLocaleString()}` : '';
-                              const quantityText = item.quantity ? item.quantity : '';
-                              return `
-                              <tr>
-                                <td class="text-center">${index + 1}</td>
-                                <td>${item.name || ''}</td>
-                                <td class="text-right">${quantityText}</td>
-                                <td class="text-center">${item.unit || ''}</td>
-                                <td class="text-right">${unitPriceText}</td>
-                                <td class="text-right">${priceText}</td>
-                              </tr>
-                              `;
-                            }).join('')}
-                          </tbody>
-                        </table>
-                        
-                        <div style="clear: both; overflow: hidden;">
-                          <table class="summary-table">
-                            <tr><th>小計 (税抜)</th><td>¥${quoteTotalAmount.toLocaleString()}</td></tr>
-                            <tr><th>消費税 (10%)</th><td>¥${quoteTaxAmount.toLocaleString()}</td></tr>
-                            <tr><th>合計 (税込)</th><td style="font-weight: bold; font-size: 14px;">¥${quoteGrandTotal.toLocaleString()}</td></tr>
-                          </table>
-                        </div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+                <div id="print-container"></div>
+                
                 <script>
-                  window.onload = function() { setTimeout(function() { window.print(); setTimeout(function() { window.close(); }, 500); }, 500); };
+                  const quoteData = ${JSON.stringify(quoteData)};
+                  const myCompany = ${JSON.stringify(myCompany)};
+                  const quoteTotalAmount = ${quoteTotalAmount};
+                  const quoteTaxAmount = ${quoteTaxAmount};
+                  const quoteGrandTotal = ${quoteGrandTotal};
+                  
+                  (${printLogicFn.toString()})(quoteData, myCompany, quoteTotalAmount, quoteTaxAmount, quoteGrandTotal);
                 <\/script>
               </body>
               </html>
@@ -833,6 +922,8 @@
             printWindow.document.write(html);
             printWindow.document.close();
           };
+
+          // ==========================================
 
           const generateCSVContent = () => { 
             const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
@@ -1017,7 +1108,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.23</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.24</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -1264,6 +1355,7 @@
                 </div>
               )}
 
+              {/* 以下ページ選択モーダル */}
               {isPageSelectModalOpen && (
                 <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                   <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
