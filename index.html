@@ -104,7 +104,6 @@
           };
 
           const extractedData = extractedDataList[currentFileIndex] || defaultData;
-          // 解析済みのデータが1つでもあるかどうか
           const hasAnalyzedData = extractedDataList.some(d => d.isAnalyzed);
 
           useEffect(() => {
@@ -513,9 +512,7 @@
           // ★見積書作成エディタ機能★
           // ==========================================
           const openQuoteEditor = () => {
-            // 解析済みの全データを取得
             const analyzedDataList = extractedDataList.filter(d => d.isAnalyzed);
-            
             if (analyzedDataList.length === 0) {
               setError("解析済みのデータがありません。");
               return;
@@ -523,10 +520,7 @@
 
             setQuoteSettings(prev => ({...prev, multiplier: 100}));
 
-            // ベース（基本情報）には最初の解析済みデータを採用
             const base = analyzedDataList[0];
-            
-            // すべてのページの明細(items)を結合する
             let allItems = [];
             analyzedDataList.forEach(data => {
               if (data.items && Array.isArray(data.items)) {
@@ -625,6 +619,148 @@
           const quoteTaxAmount = Math.floor(quoteTotalAmount * 0.1);
           const quoteGrandTotal = quoteTotalAmount + quoteTaxAmount;
 
+          // ==========================================
+          // PDF/Excel出力のための高度な改ページ計算ロジック
+          // ==========================================
+          const calculatePagesForQuote = () => {
+            const container = document.createElement('div');
+            container.style.cssText = 'position:absolute; left:-9999px; top:-9999px; width:210mm; background:#fff;';
+            const style = document.createElement('style');
+            style.innerHTML = `
+              .calc-page { width: 210mm; padding: 15mm; font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; box-sizing: border-box; }
+              .calc-title { text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 8px; margin-bottom: 15px; }
+              .calc-header-wrap { display: flex; justify-content: space-between; margin-bottom: 15px; }
+              .calc-left-col { width: 55%; }
+              .calc-right-col { width: 40%; text-align: right; }
+              .calc-recipient { font-size: 18px; border-bottom: 1px solid #000; padding-bottom: 3px; margin-bottom: 10px; display: inline-block; min-width: 80%; }
+              .calc-info-row { display: flex; margin-bottom: 3px; }
+              .calc-info-label { width: 70px; color: #333; }
+              .calc-info-value { flex: 1; }
+              .calc-total-box { margin-top: 20px; font-size: 18px; font-weight: bold; border-bottom: 3px double #000; display: inline-block; padding: 5px 20px 5px 0; }
+              .calc-company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; }
+              table.calc-items { width: 100%; border-collapse: collapse; border: 1px solid #000; margin-bottom: 10px;}
+              table.calc-items th, table.calc-items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 4px 6px; word-break: break-all; }
+              table.calc-items th { background-color: #f5f5f5; text-align: center; border-bottom: 1px solid #000; border-top: 1px solid #000; }
+              .calc-summary-table { width: 35%; border-collapse: collapse; border: 1px solid #000; margin-top: 10px; float: right; }
+              .calc-summary-table th, .calc-summary-table td { border: 1px solid #000; padding: 4px 6px; }
+              .calc-summary-table th { background: #f5f5f5; text-align: center; width: 40%; }
+              .calc-summary-table td { text-align: right; }
+              .calc-simple-header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #000; padding-bottom: 5px; margin-bottom: 15px; }
+            `;
+            container.appendChild(style);
+            document.body.appendChild(container);
+
+            const escapeHtml = (str) => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            
+            const PAGE_HEIGHT_LIMIT = 980; // A4の高さ限界(余白除く)
+            let pages = [];
+            let pageCount = 0;
+            
+            const createNewPageDOM = (isFirst) => {
+              pageCount++;
+              const pageDiv = document.createElement('div');
+              pageDiv.className = 'calc-page';
+              if (isFirst) {
+                pageDiv.innerHTML = `
+                  <div class="calc-title">御見積書</div>
+                  <div class="calc-header-wrap">
+                    <div class="calc-left-col">
+                      <div class="calc-recipient">${escapeHtml(quoteData.recipient)} ${escapeHtml(quoteData.honorific)}</div>
+                      <div>下記の通り御見積申し上げます。</div>
+                      <div class="calc-total-box">御見積金額：¥${quoteGrandTotal.toLocaleString()} - (税込)</div>
+                      <div style="margin-top: 10px;">
+                        <div class="calc-info-row"><div class="calc-info-label">工事名：</div><div class="calc-info-value">${escapeHtml(quoteData.project_name)}</div></div>
+                        <div class="calc-info-row"><div class="calc-info-label">現場住所：</div><div class="calc-info-value">${escapeHtml(quoteData.project_address)}</div></div>
+                        <div class="calc-info-row" style="margin-top: 6px;"><div class="calc-info-label" style="font-size: 10px;">有効期限：</div><div class="calc-info-value" style="font-size: 10px;">発行日より30日間</div></div>
+                      </div>
+                    </div>
+                    <div class="calc-right-col">
+                      <div style="margin-bottom: 10px;">発行日：${escapeHtml(quoteData.date)}</div>
+                      <div class="calc-company-name">${escapeHtml(myCompany.name)}</div>
+                      <div>〒${escapeHtml(myCompany.zip)}</div>
+                      <div>${escapeHtml(myCompany.address)}</div>
+                      <div>TEL：${escapeHtml(myCompany.tel)}</div>
+                      <div style="margin-top: 5px;">担当：${escapeHtml(myCompany.person)}</div>
+                    </div>
+                  </div>
+                  <table class="calc-items">
+                    <thead><tr><th style="width:5%;">No</th><th style="width:40%;">品名・仕様</th><th style="width:10%;">数量</th><th style="width:10%;">単位</th><th style="width:15%;">単価</th><th style="width:20%;">金額</th></tr></thead>
+                    <tbody></tbody>
+                  </table>
+                `;
+              } else {
+                pageDiv.innerHTML = `
+                  <div class="calc-simple-header">
+                    <div class="calc-left-col">
+                      <div style="font-weight: bold; font-size: 14px; margin-bottom: 5px;">御見積書 (${pageCount}枚目)</div>
+                      <div>宛名：${escapeHtml(quoteData.recipient)} ${escapeHtml(quoteData.honorific)}</div>
+                      <div>工事名：${escapeHtml(quoteData.project_name)}</div>
+                    </div>
+                    <div class="calc-right-col">
+                      <div>発行日：${escapeHtml(quoteData.date)}</div>
+                      <div style="font-weight: bold;">${escapeHtml(myCompany.name)}</div>
+                    </div>
+                  </div>
+                  <table class="calc-items">
+                    <thead><tr><th style="width:5%;">No</th><th style="width:40%;">品名・仕様</th><th style="width:10%;">数量</th><th style="width:10%;">単位</th><th style="width:15%;">単価</th><th style="width:20%;">金額</th></tr></thead>
+                    <tbody></tbody>
+                  </table>
+                `;
+              }
+              container.appendChild(pageDiv);
+              pages.push({ isFirst, items: [], hasSummary: false });
+              return { pageDiv, tbody: pageDiv.querySelector('tbody'), pageIndex: pages.length - 1 };
+            };
+
+            let { pageDiv, tbody, pageIndex } = createNewPageDOM(true);
+            
+            quoteData.items.forEach((item, index) => {
+              const tr = document.createElement('tr');
+              tr.innerHTML = `
+                <td style="text-align:center;">${index + 1}</td>
+                <td>${escapeHtml(item.name)}</td>
+                <td style="text-align:right;">${item.quantity || ''}</td>
+                <td style="text-align:center;">${escapeHtml(item.unit)}</td>
+                <td style="text-align:right;">${item.unit_price ? '¥' + item.unit_price.toLocaleString() : ''}</td>
+                <td style="text-align:right;">${item.price ? '¥' + item.price.toLocaleString() : ''}</td>
+              `;
+              tbody.appendChild(tr);
+              
+              if (pageDiv.offsetHeight > PAGE_HEIGHT_LIMIT) {
+                tbody.removeChild(tr);
+                let newPage = createNewPageDOM(false);
+                pageDiv = newPage.pageDiv;
+                tbody = newPage.tbody;
+                pageIndex = newPage.pageIndex;
+                tbody.appendChild(tr);
+              }
+              pages[pageIndex].items.push({...item, originalIndex: index});
+            });
+
+            const summaryDiv = document.createElement('div');
+            summaryDiv.innerHTML = `
+              <div style="clear: both; overflow: hidden;">
+                <table class="calc-summary-table">
+                  <tr><th>小計 (税抜)</th><td>¥${quoteTotalAmount.toLocaleString()}</td></tr>
+                  <tr><th>消費税 (10%)</th><td>¥${quoteTaxAmount.toLocaleString()}</td></tr>
+                  <tr><th>合計 (税込)</th><td style="font-weight: bold; font-size: 14px;">¥${quoteGrandTotal.toLocaleString()}</td></tr>
+                </table>
+              </div>
+            `;
+            pageDiv.appendChild(summaryDiv);
+            if (pageDiv.offsetHeight > PAGE_HEIGHT_LIMIT) {
+              pageDiv.removeChild(summaryDiv);
+              let newPage = createNewPageDOM(false);
+              pages[newPage.pageIndex].hasSummary = true;
+            } else {
+              pages[pageIndex].hasSummary = true;
+            }
+
+            document.body.removeChild(container);
+            return pages;
+          };
+
+          // ★全体コピー機能
           const copyQuoteTSVToClipboard = () => {
             const escapeTSV = (str) => String(str || '').replace(/\t/g, ' ').replace(/\n/g, ' ');
             let tsvContent = `御見積書\n\n`;
@@ -656,66 +792,105 @@
             } catch (err) { setError("コピーに失敗しました。"); }
           };
 
+          // ★ 高度な改ページ計算結果を利用して、Excel出力用のHTML文字列を組み立てる
           const exportQuoteExcel = () => {
-            let tableHtml = `
-              <table border="0" style="font-family: 'Meiryo', sans-serif; font-size: 11pt;">
-                <tr><td colspan="6" style="text-align: center; font-size: 18pt; font-weight: bold; border-bottom: 1px solid #000;">御見積書</td></tr>
-                <tr><td colspan="6"></td></tr>
-                <tr>
-                  <td colspan="3" style="font-size: 14pt; border-bottom: 1px solid #000;">${quoteData.recipient || '　　　　　　　'} ${quoteData.honorific || ''}</td>
-                  <td colspan="3" style="text-align: right;">発行日: ${quoteData.date || ''}</td>
-                </tr>
-                <tr>
-                  <td colspan="3">下記の通り御見積申し上げます。</td>
-                  <td colspan="3" style="text-align: right; font-weight: bold; font-size: 12pt;">${myCompany.name || ''}</td>
-                </tr>
-                <tr>
-                  <td colspan="3" style="font-size: 16pt; font-weight: bold; border-bottom: 3px double #000;">御見積金額：¥${quoteGrandTotal.toLocaleString()} -</td>
-                  <td colspan="3" style="text-align: right;">〒${myCompany.zip || ''}</td>
-                </tr>
-                <tr>
-                  <td colspan="3">工事名: ${quoteData.project_name || ''}</td>
-                  <td colspan="3" style="text-align: right;">${myCompany.address || ''}</td>
-                </tr>
-                <tr>
-                  <td colspan="3">現場住所: ${quoteData.project_address || ''}</td>
-                  <td colspan="3" style="text-align: right;">TEL: ${myCompany.tel || ''}</td>
-                </tr>
-                <tr>
-                  <td colspan="3" style="font-size: 10pt; color: #555;">見積有効期限: 発行日より30日間</td>
-                  <td colspan="3" style="text-align: right;">担当: ${myCompany.person || ''}</td>
-                </tr>
-                <tr><td colspan="6"></td></tr>
-                <tr>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">No.</th>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">品名・仕様</th>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">数量</th>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">単位</th>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">単価</th>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">金額</th>
-                </tr>
-            `;
+            const pages = calculatePagesForQuote();
+            let tableHtml = `<table border="0" style="font-family: 'Meiryo', sans-serif; font-size: 11pt;">`;
 
-            quoteData.items.forEach((item, idx) => {
+            pages.forEach((page, pIdx) => {
+              if (pIdx > 0) {
+                // Excel用の強制改ページタグと少しの余白を挿入
+                tableHtml += `
+                  <br clear="all" style="mso-special-character:line-break; page-break-before:always">
+                  <tr><td colspan="6" style="height: 30px;"></td></tr>
+                `;
+              }
+              
+              if (page.isFirst) {
+                tableHtml += `
+                  <tr><td colspan="6" style="text-align: center; font-size: 18pt; font-weight: bold; border-bottom: 1px solid #000;">御見積書</td></tr>
+                  <tr><td colspan="6"></td></tr>
+                  <tr>
+                    <td colspan="3" style="font-size: 14pt; border-bottom: 1px solid #000;">${quoteData.recipient || '　　　　　　　'} ${quoteData.honorific || ''}</td>
+                    <td colspan="3" style="text-align: right;">発行日: ${quoteData.date || ''}</td>
+                  </tr>
+                  <tr>
+                    <td colspan="3">下記の通り御見積申し上げます。</td>
+                    <td colspan="3" style="text-align: right; font-weight: bold; font-size: 12pt;">${myCompany.name || ''}</td>
+                  </tr>
+                  <tr>
+                    <td colspan="3" style="font-size: 16pt; font-weight: bold; border-bottom: 3px double #000;">御見積金額：¥${quoteGrandTotal.toLocaleString()} -</td>
+                    <td colspan="3" style="text-align: right;">〒${myCompany.zip || ''}</td>
+                  </tr>
+                  <tr>
+                    <td colspan="3">工事名: ${quoteData.project_name || ''}</td>
+                    <td colspan="3" style="text-align: right;">${myCompany.address || ''}</td>
+                  </tr>
+                  <tr>
+                    <td colspan="3">現場住所: ${quoteData.project_address || ''}</td>
+                    <td colspan="3" style="text-align: right;">TEL: ${myCompany.tel || ''}</td>
+                  </tr>
+                  <tr>
+                    <td colspan="3" style="font-size: 10pt; color: #555;">見積有効期限: 発行日より30日間</td>
+                    <td colspan="3" style="text-align: right;">担当: ${myCompany.person || ''}</td>
+                  </tr>
+                  <tr><td colspan="6"></td></tr>
+                `;
+              } else {
+                // 2ページ目以降の簡易ヘッダー
+                tableHtml += `
+                  <tr>
+                    <td colspan="3" style="font-weight: bold; font-size: 14pt;">御見積書 (${pIdx + 1}枚目)</td>
+                    <td colspan="3" style="text-align: right;">発行日: ${quoteData.date || ''}</td>
+                  </tr>
+                  <tr>
+                    <td colspan="3">宛名: ${quoteData.recipient || ''} ${quoteData.honorific || ''}</td>
+                    <td colspan="3" style="text-align: right; font-weight: bold;">${myCompany.name || ''}</td>
+                  </tr>
+                  <tr>
+                    <td colspan="3" style="border-bottom: 2px solid #000;">工事名: ${quoteData.project_name || ''}</td>
+                    <td colspan="3" style="border-bottom: 2px solid #000;"></td>
+                  </tr>
+                  <tr><td colspan="6"></td></tr>
+                `;
+              }
+
               tableHtml += `
-                <tr>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${idx + 1}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000;">${item.name || ''}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.quantity || ''}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${item.unit || ''}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.unit_price || ''}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.price || ''}</td>
-                </tr>
+                  <tr>
+                    <th style="border: 1px solid #000; background-color: #f0f0f0;">No.</th>
+                    <th style="border: 1px solid #000; background-color: #f0f0f0;">品名・仕様</th>
+                    <th style="border: 1px solid #000; background-color: #f0f0f0;">数量</th>
+                    <th style="border: 1px solid #000; background-color: #f0f0f0;">単位</th>
+                    <th style="border: 1px solid #000; background-color: #f0f0f0;">単価</th>
+                    <th style="border: 1px solid #000; background-color: #f0f0f0;">金額</th>
+                  </tr>
               `;
+
+              page.items.forEach((item) => {
+                tableHtml += `
+                  <tr>
+                    <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${item.originalIndex + 1}</td>
+                    <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000;">${item.name || ''}</td>
+                    <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.quantity || ''}</td>
+                    <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${item.unit || ''}</td>
+                    <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.unit_price || ''}</td>
+                    <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.price || ''}</td>
+                  </tr>
+                `;
+              });
+
+              tableHtml += `<tr><td colspan="6" style="border-top: 1px solid #000;"></td></tr>`;
+
+              if (page.hasSummary) {
+                tableHtml += `
+                  <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">小計 (税抜)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTotalAmount.toLocaleString()}</td></tr>
+                  <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">消費税 (10%)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTaxAmount.toLocaleString()}</td></tr>
+                  <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">合計 (税込)</th><td style="border: 1px solid #000; text-align: right; font-weight: bold;">¥${quoteGrandTotal.toLocaleString()}</td></tr>
+                `;
+              }
             });
 
-            tableHtml += `
-                <tr><td colspan="6" style="border-top: 1px solid #000;"></td></tr>
-                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">小計 (税抜)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTotalAmount.toLocaleString()}</td></tr>
-                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">消費税 (10%)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTaxAmount.toLocaleString()}</td></tr>
-                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">合計 (税込)</th><td style="border: 1px solid #000; text-align: right; font-weight: bold;">¥${quoteGrandTotal.toLocaleString()}</td></tr>
-              </table>
-            `;
+            tableHtml += `</table>`;
 
             const htmlStr = `
             <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
@@ -728,142 +903,14 @@
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
           };
 
+          // ★ 見積書エディターからのPDF出力 (計算ロジックをExcelと共通化)
           const printQuotePDF = () => {
             const printWindow = window.open('', '_blank');
             if (!printWindow) { setError("ポップアップがブロックされました。"); return; }
             
-            const printLogicFn = function(quoteData, myCompany, quoteTotalAmount, quoteTaxAmount, quoteGrandTotal) {
-              const PAGE_HEIGHT_LIMIT = 980; 
-              const container = document.getElementById('print-container');
-              let pageCount = 0;
-              
-              function escapeHtml(str) {
-                if (!str) return '';
-                return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-              }
-
-              function createNewPage(isFirstPage) {
-                pageCount++;
-                const pageDiv = document.createElement('div');
-                pageDiv.className = 'page';
-                
-                const contentDiv = document.createElement('div');
-                contentDiv.className = 'page-content';
-                
-                if (isFirstPage) {
-                  contentDiv.innerHTML = 
-                    '<div class="title">御見積書</div>' +
-                    '<div class="header-wrap">' +
-                      '<div class="left-col">' +
-                        '<div class="recipient">' + escapeHtml(quoteData.recipient || '　　　　　　　　　　') + ' ' + escapeHtml(quoteData.honorific || '') + '</div>' +
-                        '<div>下記の通り御見積申し上げます。</div>' +
-                        '<div class="total-box">御見積金額：¥' + quoteGrandTotal.toLocaleString() + ' - (税込)</div>' +
-                        '<div style="margin-top: 10px;">' +
-                          '<div class="info-row"><div class="info-label">工事名：</div><div class="info-value">' + escapeHtml(quoteData.project_name || '') + '</div></div>' +
-                          '<div class="info-row"><div class="info-label">現場住所：</div><div class="info-value">' + escapeHtml(quoteData.project_address || '') + '</div></div>' +
-                          '<div class="info-row" style="margin-top: 6px;"><div class="info-label" style="font-size: 10px; color: #555;">有効期限：</div><div class="info-value" style="font-size: 10px; color: #555;">発行日より30日間</div></div>' +
-                        '</div>' +
-                      '</div>' +
-                      '<div class="right-col">' +
-                        '<div style="margin-bottom: 10px;">発行日：' + escapeHtml(quoteData.date || '') + '</div>' +
-                        '<div class="company-name">' + escapeHtml(myCompany.name || '') + '</div>' +
-                        '<div>〒' + escapeHtml(myCompany.zip || '') + '</div>' +
-                        '<div>' + escapeHtml(myCompany.address || '') + '</div>' +
-                        '<div>TEL：' + escapeHtml(myCompany.tel || '') + '</div>' +
-                        '<div style="margin-top: 5px;">担当：' + escapeHtml(myCompany.person || '') + '</div>' +
-                      '</div>' +
-                    '</div>';
-                } else {
-                  contentDiv.innerHTML = 
-                    '<div class="simple-header">' +
-                      '<div class="left-col">' +
-                        '<div style="font-weight: bold; font-size: 14px; margin-bottom: 5px;">御見積書 (' + pageCount + '枚目)</div>' +
-                        '<div>宛名：' + escapeHtml(quoteData.recipient || '') + ' ' + escapeHtml(quoteData.honorific || '') + '</div>' +
-                        '<div>工事名：' + escapeHtml(quoteData.project_name || '') + '</div>' +
-                      '</div>' +
-                      '<div class="right-col">' +
-                        '<div>発行日：' + escapeHtml(quoteData.date || '') + '</div>' +
-                        '<div style="font-weight: bold;">' + escapeHtml(myCompany.name || '') + '</div>' +
-                      '</div>' +
-                    '</div>';
-                }
-                
-                pageDiv.appendChild(contentDiv);
-                container.appendChild(pageDiv);
-                return contentDiv;
-              }
-
-              function createTable(parentDiv) {
-                const table = document.createElement('table');
-                table.className = 'items';
-                table.innerHTML = 
-                  '<thead>' +
-                    '<tr>' +
-                      '<th style="width: 5%;">No</th>' +
-                      '<th style="width: 40%;">品名・仕様</th>' +
-                      '<th style="width: 10%;">数量</th>' +
-                      '<th style="width: 10%;">単位</th>' +
-                      '<th style="width: 15%;">単価</th>' +
-                      '<th style="width: 20%;">金額</th>' +
-                    '</tr>' +
-                  '</thead>' +
-                  '<tbody></tbody>';
-                parentDiv.appendChild(table);
-                return table.querySelector('tbody');
-              }
-
-              let currentPage = createNewPage(true);
-              let currentTableBody = createTable(currentPage);
-              
-              quoteData.items.forEach(function(item, index) {
-                const tr = document.createElement('tr');
-                const priceText = item.price ? '¥' + item.price.toLocaleString() : '';
-                const unitPriceText = item.unit_price ? '¥' + item.unit_price.toLocaleString() : '';
-                const quantityText = item.quantity ? item.quantity : '';
-                
-                tr.innerHTML = 
-                  '<td class="text-center">' + (index + 1) + '</td>' +
-                  '<td>' + escapeHtml(item.name || '') + '</td>' +
-                  '<td class="text-right">' + escapeHtml(quantityText) + '</td>' +
-                  '<td class="text-center">' + escapeHtml(item.unit || '') + '</td>' +
-                  '<td class="text-right">' + escapeHtml(unitPriceText) + '</td>' +
-                  '<td class="text-right">' + escapeHtml(priceText) + '</td>';
-                
-                currentTableBody.appendChild(tr);
-                
-                if (currentPage.offsetHeight > PAGE_HEIGHT_LIMIT) {
-                  currentTableBody.removeChild(tr); 
-                  
-                  currentPage = createNewPage(false); 
-                  currentTableBody = createTable(currentPage);
-                  currentTableBody.appendChild(tr); 
-                }
-              });
-
-              const summaryDiv = document.createElement('div');
-              summaryDiv.style.cssText = "clear: both; overflow: hidden;";
-              summaryDiv.innerHTML = 
-                '<table class="summary-table">' +
-                  '<tr><th>小計 (税抜)</th><td>¥' + quoteTotalAmount.toLocaleString() + '</td></tr>' +
-                  '<tr><th>消費税 (10%)</th><td>¥' + quoteTaxAmount.toLocaleString() + '</td></tr>' +
-                  '<tr><th>合計 (税込)</th><td style="font-weight: bold; font-size: 14px;">¥' + quoteGrandTotal.toLocaleString() + '</td></tr>' +
-                '</table>';
-              
-              currentPage.appendChild(summaryDiv);
-              
-              if (currentPage.offsetHeight > PAGE_HEIGHT_LIMIT) {
-                currentPage.removeChild(summaryDiv);
-                currentPage = createNewPage(false);
-                currentPage.appendChild(summaryDiv);
-              }
-
-              setTimeout(function() { 
-                window.print(); 
-                setTimeout(function() { window.close(); }, 500); 
-              }, 500);
-            };
-
-            const html = `
+            const pages = calculatePagesForQuote();
+            
+            let html = `
               <!DOCTYPE html>
               <html lang="ja">
               <head>
@@ -873,26 +920,9 @@
                   @page { size: A4 portrait; margin: 0; }
                   body { font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; color: #000; margin: 0; padding: 0; background: #525659; }
                   #print-container { padding: 20px 0; }
-                  
-                  .page { 
-                    width: 210mm; 
-                    height: 297mm; 
-                    padding: 15mm; 
-                    margin: 0 auto 20px auto; 
-                    background: #fff; 
-                    box-sizing: border-box; 
-                    box-shadow: 0 0 10px rgba(0,0,0,0.5); 
-                    position: relative; 
-                    overflow: hidden; 
-                    page-break-after: always; 
-                  }
+                  .page { width: 210mm; height: 297mm; padding: 15mm; margin: 0 auto 20px auto; background: #fff; box-sizing: border-box; box-shadow: 0 0 10px rgba(0,0,0,0.5); position: relative; overflow: hidden; page-break-after: always; }
                   .page:last-child { page-break-after: auto; margin-bottom: 0; }
-                  
-                  @media print {
-                    body { background: none; }
-                    #print-container { padding: 0; }
-                    .page { margin: 0; box-shadow: none; border: none; }
-                  }
+                  @media print { body { background: none; } #print-container { padding: 0; } .page { margin: 0; box-shadow: none; border: none; } }
                   
                   .title { text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 8px; margin-bottom: 15px; }
                   .header-wrap { display: flex; justify-content: space-between; margin-bottom: 15px; }
@@ -904,34 +934,106 @@
                   .info-value { flex: 1; }
                   .total-box { margin-top: 20px; font-size: 18px; font-weight: bold; border-bottom: 3px double #000; display: inline-block; padding: 5px 20px 5px 0; }
                   .company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; }
-                  
                   table.items { width: 100%; border-collapse: collapse; border: 1px solid #000; margin-bottom: 10px;}
                   table.items th, table.items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 4px 6px; word-break: break-all; }
                   table.items th { background-color: #f5f5f5; text-align: center; border-bottom: 1px solid #000; border-top: 1px solid #000; }
                   table.items tbody tr:last-child td { border-bottom: 1px solid #000; }
-                  
                   .summary-table { width: 35%; border-collapse: collapse; border: 1px solid #000; margin-top: 10px; float: right; }
                   .summary-table th, .summary-table td { border: 1px solid #000; padding: 4px 6px; }
                   .summary-table th { background: #f5f5f5; text-align: center; width: 40%; }
                   .summary-table td { text-align: right; }
-                  
                   .text-right { text-align: right; }
                   .text-center { text-align: center; }
-                  
                   .simple-header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #000; padding-bottom: 5px; margin-bottom: 15px; }
                 </style>
               </head>
               <body>
-                <div id="print-container"></div>
-                
+                <div id="print-container">
+            `;
+
+            pages.forEach((page, pIdx) => {
+              html += `<div class="page">`;
+              
+              if (page.isFirst) {
+                html += `
+                  <div class="title">御見積書</div>
+                  <div class="header-wrap">
+                    <div class="left-col">
+                      <div class="recipient">${quoteData.recipient || '　　　　　　　　　　'} ${quoteData.honorific || ''}</div>
+                      <div>下記の通り御見積申し上げます。</div>
+                      <div class="total-box">御見積金額：¥${quoteGrandTotal.toLocaleString()} - (税込)</div>
+                      <div style="margin-top: 10px;">
+                        <div class="info-row"><div class="info-label">工事名：</div><div class="info-value">${quoteData.project_name || ''}</div></div>
+                        <div class="info-row"><div class="info-label">現場住所：</div><div class="info-value">${quoteData.project_address || ''}</div></div>
+                        <div class="info-row" style="margin-top: 6px;"><div class="info-label" style="font-size: 10px;">有効期限：</div><div class="info-value" style="font-size: 10px;">発行日より30日間</div></div>
+                      </div>
+                    </div>
+                    <div class="right-col">
+                      <div style="margin-bottom: 10px;">発行日：${quoteData.date || ''}</div>
+                      <div class="company-name">${myCompany.name || ''}</div>
+                      <div>〒${myCompany.zip || ''}</div>
+                      <div>${myCompany.address || ''}</div>
+                      <div>TEL：${myCompany.tel || ''}</div>
+                      <div style="margin-top: 5px;">担当：${myCompany.person || ''}</div>
+                    </div>
+                  </div>
+                `;
+              } else {
+                html += `
+                  <div class="simple-header">
+                    <div class="left-col">
+                      <div style="font-weight: bold; font-size: 14px; margin-bottom: 5px;">御見積書 (${pIdx + 1}枚目)</div>
+                      <div>宛名：${quoteData.recipient || ''} ${quoteData.honorific || ''}</div>
+                      <div>工事名：${quoteData.project_name || ''}</div>
+                    </div>
+                    <div class="right-col">
+                      <div>発行日：${quoteData.date || ''}</div>
+                      <div style="font-weight: bold;">${myCompany.name || ''}</div>
+                    </div>
+                  </div>
+                `;
+              }
+
+              html += `
+                <table class="items">
+                  <thead><tr><th style="width: 5%;">No</th><th style="width: 40%;">品名・仕様</th><th style="width: 10%;">数量</th><th style="width: 10%;">単位</th><th style="width: 15%;">単価</th><th style="width: 20%;">金額</th></tr></thead>
+                  <tbody>
+              `;
+
+              page.items.forEach((item) => {
+                html += `
+                  <tr>
+                    <td class="text-center">${item.originalIndex + 1}</td>
+                    <td>${item.name || ''}</td>
+                    <td class="text-right">${item.quantity || ''}</td>
+                    <td class="text-center">${item.unit || ''}</td>
+                    <td class="text-right">${item.unit_price ? '¥' + item.unit_price.toLocaleString() : ''}</td>
+                    <td class="text-right">${item.price ? '¥' + item.price.toLocaleString() : ''}</td>
+                  </tr>
+                `;
+              });
+
+              html += `</tbody></table>`;
+
+              if (page.hasSummary) {
+                html += `
+                  <div style="clear: both; overflow: hidden;">
+                    <table class="summary-table">
+                      <tr><th>小計 (税抜)</th><td>¥${quoteTotalAmount.toLocaleString()}</td></tr>
+                      <tr><th>消費税 (10%)</th><td>¥${quoteTaxAmount.toLocaleString()}</td></tr>
+                      <tr><th>合計 (税込)</th><td style="font-weight: bold; font-size: 14px;">¥${quoteGrandTotal.toLocaleString()}</td></tr>
+                    </table>
+                  </div>
+                `;
+              }
+
+              html += `</div>`; // .page の閉じタグ
+            });
+
+            html += `
+                </div>
                 <script>
-                  const quoteData = ${JSON.stringify(quoteData)};
-                  const myCompany = ${JSON.stringify(myCompany)};
-                  const quoteTotalAmount = ${quoteTotalAmount};
-                  const quoteTaxAmount = ${quoteTaxAmount};
-                  const quoteGrandTotal = ${quoteGrandTotal};
-                  
-                  (${printLogicFn.toString()})(quoteData, myCompany, quoteTotalAmount, quoteTaxAmount, quoteGrandTotal);
+                  window.onload = function() { setTimeout(function() { window.print(); setTimeout(function() { window.close(); }, 500); }, 500); };
                 <\/script>
               </body>
               </html>
@@ -939,6 +1041,8 @@
             printWindow.document.write(html);
             printWindow.document.close();
           };
+
+          // ==========================================
 
           const generateCSVContent = () => { 
             const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
@@ -1007,20 +1111,6 @@
               } else { aoa.push([...baseRow, "", 0, "", 0, 0]); }
             });
             const worksheet = XLSX.utils.aoa_to_sheet(aoa); const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, worksheet, "抽出データ"); XLSX.writeFile(workbook, "extracted_documents_all.xlsx");
-          };
-
-          const exportPDF = () => { 
-            const printWindow = window.open('', '_blank');
-            if (!printWindow) { setError("ポップアップがブロックされました。PDF出力するにはポップアップを許可してください。"); return; }
-            let html = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>抽出データ一覧 (PDF用)</title><style>body { font-family: sans-serif; font-size: 11px; padding: 15mm; color: #333; margin: 0; box-sizing: border-box;} table { border-collapse: collapse; width: 100%; margin-top: 20px; } th, td { border: 1px solid #ccc; padding: 6px; text-align: left; } th { background-color: #f8f9fa; font-weight: bold; } .text-right { text-align: right; } @media print { @page { margin: 0; size: landscape; } }</style></head><body><h2>抽出データ一覧</h2><table><thead><tr><th>ファイル名</th><th>書類種別</th><th>発行日</th><th>宛先</th><th>発行元</th><th>工事名</th><th>現場住所</th><th>合計金額</th><th>品名</th><th>数量</th><th>単位</th><th>単価</th><th>金額</th></tr></thead><tbody>`;
-            extractedDataList.forEach((data, index) => {
-              const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
-              if (data.items && data.items.length > 0) {
-                data.items.forEach(item => { html += `<tr><td>${fileName}</td><td>${data.document_type || ''}</td><td>${data.date || ''}</td><td>${data.recipient || ''}</td><td>${data.issuer || ''}</td><td>${data.project_name || ''}</td><td>${data.project_address || ''}</td><td class="text-right">${data.total_amount || 0}</td><td>${item.name || ''}</td><td class="text-right">${item.quantity || 0}</td><td>${item.unit || ''}</td><td class="text-right">${item.unit_price || 0}</td><td class="text-right">${item.price || 0}</td></tr>`; });
-              } else { html += `<tr><td>${fileName}</td><td>${data.document_type || ''}</td><td>${data.date || ''}</td><td>${data.recipient || ''}</td><td>${data.issuer || ''}</td><td>${data.project_name || ''}</td><td>${data.project_address || ''}</td><td class="text-right">${data.total_amount || 0}</td><td></td><td></td><td></td><td></td><td></td></tr>`; }
-            });
-            html += `</tbody></table><script>window.onload = function() { setTimeout(function() { window.print(); setTimeout(function() { window.close(); }, 500); }, 500); };<\/script></body></html>`;
-            printWindow.document.write(html); printWindow.document.close();
           };
 
           const copyTSVToClipboard = () => { 
@@ -1123,7 +1213,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.25</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.26</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -1141,7 +1231,6 @@
                       {isExportMenuOpen && (
                         <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden z-50">
                           <div className="py-1">
-                            {/* ★ 解析済みデータが「1つでも」あればボタンを有効化 */}
                             <button onClick={() => { openQuoteEditor(); setIsExportMenuOpen(false); }} disabled={!hasAnalyzedData} className="w-full text-left px-4 py-3 text-sm text-indigo-700 hover:bg-indigo-50 flex items-center gap-3 transition-colors border-b-2 border-indigo-100 disabled:opacity-50">
                               <FaIcon name="file-invoice" className="text-indigo-600 w-5 text-center" size={18} />
                               <div>
@@ -1371,6 +1460,7 @@
                 </div>
               )}
 
+              {/* 以下ページ選択モーダル */}
               {isPageSelectModalOpen && (
                 <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                   <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
