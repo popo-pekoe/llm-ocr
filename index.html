@@ -104,6 +104,8 @@
           };
 
           const extractedData = extractedDataList[currentFileIndex] || defaultData;
+          // 解析済みのデータが1つでもあるかどうか
+          const hasAnalyzedData = extractedDataList.some(d => d.isAnalyzed);
 
           useEffect(() => {
             const savedKey = localStorage.getItem('gemini_api_key');
@@ -507,13 +509,30 @@
             dragItemIndex.current = null; dragOverItemIndex.current = null;
           };
 
+          // ==========================================
+          // ★見積書作成エディタ機能★
+          // ==========================================
           const openQuoteEditor = () => {
-            const base = extractedDataList[currentFileIndex];
-            if (!base) return;
+            // 解析済みの全データを取得
+            const analyzedDataList = extractedDataList.filter(d => d.isAnalyzed);
+            
+            if (analyzedDataList.length === 0) {
+              setError("解析済みのデータがありません。");
+              return;
+            }
 
             setQuoteSettings(prev => ({...prev, multiplier: 100}));
 
-            const baseItems = base.items || [];
+            // ベース（基本情報）には最初の解析済みデータを採用
+            const base = analyzedDataList[0];
+            
+            // すべてのページの明細(items)を結合する
+            let allItems = [];
+            analyzedDataList.forEach(data => {
+              if (data.items && Array.isArray(data.items)) {
+                allItems = allItems.concat(data.items);
+              }
+            });
 
             setQuoteData({
               recipient: base.issuer || base.recipient || '',
@@ -521,7 +540,7 @@
               project_name: base.project_name || '',
               project_address: base.project_address || '',
               date: new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '/'),
-              items: baseItems.map(item => ({
+              items: allItems.map(item => ({
                 ...item,
                 base_unit_price: item.unit_price || 0,
                 unit_price: item.unit_price || 0,
@@ -709,12 +728,10 @@
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
           };
 
-          // ★ 見積書エディターからのPDF出力：JavaScriptによる高度な改ページ制御
           const printQuotePDF = () => {
             const printWindow = window.open('', '_blank');
             if (!printWindow) { setError("ポップアップがブロックされました。"); return; }
             
-            // スクリプトのロジックを関数として定義（Babelによるパースエラーを防ぐため）
             const printLogicFn = function(quoteData, myCompany, quoteTotalAmount, quoteTaxAmount, quoteGrandTotal) {
               const PAGE_HEIGHT_LIMIT = 980; 
               const container = document.getElementById('print-container');
@@ -923,8 +940,6 @@
             printWindow.document.close();
           };
 
-          // ==========================================
-
           const generateCSVContent = () => { 
             const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
             let csvContent = "ファイル名,書類種別,発行日,宛先,発行元,工事名,現場住所,合計金額,品名,数量,単位,単価,金額\n";
@@ -1108,7 +1123,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.24</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.25</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -1126,7 +1141,8 @@
                       {isExportMenuOpen && (
                         <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden z-50">
                           <div className="py-1">
-                            <button onClick={() => { openQuoteEditor(); setIsExportMenuOpen(false); }} disabled={!extractedData.isAnalyzed} className="w-full text-left px-4 py-3 text-sm text-indigo-700 hover:bg-indigo-50 flex items-center gap-3 transition-colors border-b-2 border-indigo-100 disabled:opacity-50">
+                            {/* ★ 解析済みデータが「1つでも」あればボタンを有効化 */}
+                            <button onClick={() => { openQuoteEditor(); setIsExportMenuOpen(false); }} disabled={!hasAnalyzedData} className="w-full text-left px-4 py-3 text-sm text-indigo-700 hover:bg-indigo-50 flex items-center gap-3 transition-colors border-b-2 border-indigo-100 disabled:opacity-50">
                               <FaIcon name="file-invoice" className="text-indigo-600 w-5 text-center" size={18} />
                               <div>
                                 <div className="font-bold">自社用に見積書を作成</div>
@@ -1355,7 +1371,6 @@
                 </div>
               )}
 
-              {/* 以下ページ選択モーダル */}
               {isPageSelectModalOpen && (
                 <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                   <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
