@@ -91,7 +91,7 @@
             name: '', zip: '', address: '', tel: '', person: ''
           });
           const [quoteData, setQuoteData] = useState({
-            recipient: '', honorific: '御中', project_name: '', project_address: '', date: '', items: []
+            recipient: '', honorific: '御中', project_name: '', project_address: '', date: '', original_total: 0, items: []
           });
 
           const panelRef = useRef(null);
@@ -525,18 +525,37 @@
               }
             });
 
+            // ★ 抽出元の合計金額の最大値を取得（アラート表示用）
+            const originalTotal = Math.max(...analyzedDataList.map(d => d.total_amount || 0));
+
             setQuoteData({
               recipient: base.issuer || base.recipient || '',
               honorific: '御中',
               project_name: base.project_name || '',
               project_address: base.project_address || '',
               date: new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '/'),
-              items: allItems.map(item => ({
-                ...item,
-                base_unit_price: item.unit_price || 0,
-                unit_price: item.unit_price || 0,
-                price: (item.quantity || 0) * (item.unit_price || 0)
-              }))
+              original_total: originalTotal,
+              items: allItems.map(item => {
+                let q = item.quantity || 0;
+                let up = item.unit_price || 0;
+                let p = item.price || 0;
+
+                // ★ 金額だけ入っていて数量と単価が空欄(0)の場合、単価に金額を移し、数量は0とする
+                if (q === 0 && up === 0 && p !== 0) {
+                  up = p;
+                }
+
+                // ★ 数量が0でも単価が入っていればそのまま金額に適用
+                let calcP = (q === 0 && up !== 0) ? up : (q * up);
+
+                return {
+                  ...item,
+                  quantity: q,
+                  base_unit_price: up,
+                  unit_price: up,
+                  price: calcP
+                };
+              })
             });
             setIsQuoteEditorOpen(true);
           };
@@ -550,7 +569,10 @@
               const newItems = [...prev.items];
               const updatedItem = { ...newItems[index], [field]: value };
               if (field === 'quantity' || field === 'unit_price') {
-                updatedItem.price = (updatedItem.quantity || 0) * (updatedItem.unit_price || 0);
+                const q = updatedItem.quantity || 0;
+                const up = updatedItem.unit_price || 0;
+                // ★ 数量0でも単価があれば金額とする
+                updatedItem.price = (q === 0 && up !== 0) ? up : (q * up);
               }
               if (field === 'unit_price') {
                 updatedItem.base_unit_price = value;
@@ -567,7 +589,9 @@
                 let calcPrice = item.base_unit_price * (quoteSettings.multiplier / 100);
                 const target = quoteSettings.roundTarget;
                 if (target > 0) calcPrice = Math.ceil(calcPrice / target) * target;
-                return { ...item, unit_price: calcPrice, price: calcPrice * (item.quantity || 0) };
+                
+                const q = item.quantity || 0;
+                return { ...item, unit_price: calcPrice, price: (q === 0 && calcPrice !== 0) ? calcPrice : (q * calcPrice) };
               });
               return { ...prev, items: newItems };
             });
@@ -615,6 +639,10 @@
           const quoteTotalAmount = quoteData.items.reduce((sum, item) => sum + (item.price || 0), 0);
           const quoteTaxAmount = Math.floor(quoteTotalAmount * 0.1);
           const quoteGrandTotal = quoteTotalAmount + quoteTaxAmount;
+
+          // ★ 不一致アラート判定
+          const originalTotal = quoteData.original_total || 0;
+          const isTotalMismatch = originalTotal > 0 && quoteTotalAmount !== originalTotal && quoteGrandTotal !== originalTotal;
 
           // ==========================================
           // PDF出力のための高度な改ページ計算ロジック
@@ -713,10 +741,12 @@
             
             quoteData.items.forEach((item, index) => {
               const tr = document.createElement('tr');
+              // ★出力時も数量0かつ単価ありの場合は'0'を表示する
+              const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
               tr.innerHTML = `
                 <td style="text-align:center;">${index + 1}</td>
                 <td>${escapeHtml(item.name)}</td>
-                <td style="text-align:right;">${item.quantity || ''}</td>
+                <td style="text-align:right;">${qText}</td>
                 <td style="text-align:center;">${escapeHtml(item.unit)}</td>
                 <td style="text-align:right;">${item.unit_price ? '¥' + item.unit_price.toLocaleString() : ''}</td>
                 <td style="text-align:right;">${item.price ? '¥' + item.price.toLocaleString() : ''}</td>
@@ -780,7 +810,8 @@
             tsvContent += "No.\t品名・仕様\t数量\t単位\t単価\t金額\n";
             quoteData.items.forEach((item, index) => {
               const name = escapeTSV(item.name); const unit = escapeTSV(item.unit);
-              tsvContent += `${index + 1}\t${name}\t${item.quantity || ''}\t${unit}\t${item.unit_price || ''}\t${item.price || ''}\n`;
+              const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
+              tsvContent += `${index + 1}\t${name}\t${qText}\t${unit}\t${item.unit_price || ''}\t${item.price || ''}\n`;
             });
             try {
               const textArea = document.createElement("textarea"); textArea.value = tsvContent; document.body.appendChild(textArea); textArea.select(); document.execCommand("copy"); textArea.remove();
@@ -788,7 +819,7 @@
             } catch (err) { setError("コピーに失敗しました。"); }
           };
 
-          // ★ Excel出力機能のロールバックとダイアログ表示
+          // Excel出力機能のロールバックとダイアログ表示
           const exportQuoteExcel = () => {
             alert("Excelファイルをダウンロードします。\n\n【印刷時のご注意】\n明細が多く複数ページにわたる場合は、ダウンロードしたExcelファイルを開き、『ページレイアウト』タブから『改ページの挿入』を行って区切り位置を調整してください。\nまたは、必要に応じて2ページ目以降の明細を別のシートへコピー＆ペーストして、印刷レイアウトを整えてください。");
 
@@ -840,11 +871,12 @@
             `;
 
             quoteData.items.forEach((item, idx) => {
+              const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
               tableHtml += `
                 <tr>
                   <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${idx + 1}</td>
                   <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000;">${item.name || ''}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.quantity || ''}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${qText}</td>
                   <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${item.unit || ''}</td>
                   <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.unit_price || ''}</td>
                   <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.price || ''}</td>
@@ -997,11 +1029,12 @@
               `;
 
               page.items.forEach((item) => {
+                const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
                 html += `
                   <tr>
                     <td class="text-center">${item.originalIndex + 1}</td>
                     <td>${item.name || ''}</td>
-                    <td class="text-right">${item.quantity || ''}</td>
+                    <td class="text-right">${qText}</td>
                     <td class="text-center">${item.unit || ''}</td>
                     <td class="text-right">${item.unit_price ? '¥' + item.unit_price.toLocaleString() : ''}</td>
                     <td class="text-right">${item.price ? '¥' + item.price.toLocaleString() : ''}</td>
@@ -1109,20 +1142,6 @@
             const worksheet = XLSX.utils.aoa_to_sheet(aoa); const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, worksheet, "抽出データ"); XLSX.writeFile(workbook, "extracted_documents_all.xlsx");
           };
 
-          const exportPDF = () => { 
-            const printWindow = window.open('', '_blank');
-            if (!printWindow) { setError("ポップアップがブロックされました。PDF出力するにはポップアップを許可してください。"); return; }
-            let html = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>抽出データ一覧 (PDF用)</title><style>body { font-family: sans-serif; font-size: 11px; padding: 15mm; color: #333; margin: 0; box-sizing: border-box;} table { border-collapse: collapse; width: 100%; margin-top: 20px; } th, td { border: 1px solid #ccc; padding: 6px; text-align: left; } th { background-color: #f8f9fa; font-weight: bold; } .text-right { text-align: right; } @media print { @page { margin: 0; size: landscape; } }</style></head><body><h2>抽出データ一覧</h2><table><thead><tr><th>ファイル名</th><th>書類種別</th><th>発行日</th><th>宛先</th><th>発行元</th><th>工事名</th><th>現場住所</th><th>合計金額</th><th>品名</th><th>数量</th><th>単位</th><th>単価</th><th>金額</th></tr></thead><tbody>`;
-            extractedDataList.forEach((data, index) => {
-              const fileName = imageFiles[index] ? imageFiles[index].name : `file_${index+1}`;
-              if (data.items && data.items.length > 0) {
-                data.items.forEach(item => { html += `<tr><td>${fileName}</td><td>${data.document_type || ''}</td><td>${data.date || ''}</td><td>${data.recipient || ''}</td><td>${data.issuer || ''}</td><td>${data.project_name || ''}</td><td>${data.project_address || ''}</td><td class="text-right">${data.total_amount || 0}</td><td>${item.name || ''}</td><td class="text-right">${item.quantity || 0}</td><td>${item.unit || ''}</td><td class="text-right">${item.unit_price || 0}</td><td class="text-right">${item.price || 0}</td></tr>`; });
-              } else { html += `<tr><td>${fileName}</td><td>${data.document_type || ''}</td><td>${data.date || ''}</td><td>${data.recipient || ''}</td><td>${data.issuer || ''}</td><td>${data.project_name || ''}</td><td>${data.project_address || ''}</td><td class="text-right">${data.total_amount || 0}</td><td></td><td></td><td></td><td></td><td></td></tr>`; }
-            });
-            html += `</tbody></table><script>window.onload = function() { setTimeout(function() { window.print(); setTimeout(function() { window.close(); }, 500); }, 500); };<\/script></body></html>`;
-            printWindow.document.write(html); printWindow.document.close();
-          };
-
           const copyTSVToClipboard = () => { 
             const tsvContent = generateTSVContent();
             try {
@@ -1223,7 +1242,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.31</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.32</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -1321,7 +1340,6 @@
                       <FaIcon name="file-invoice" className="text-indigo-600"/> 御見積書の作成
                     </h2>
                     <div className="flex gap-2">
-                        {/* ★ PDFボタンを復活させ、Excel出力はシンプル版を使用 */}
                         <button onClick={exportQuoteExcel} className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold shadow-sm text-sm">
                           <FaIcon name="file-excel"/> Excel形式で保存 (.xls)
                         </button>
@@ -1434,6 +1452,17 @@
                            </button>
                          </div>
                        </div>
+
+                       {/* ★ 合計金額不一致アラート */}
+                       {isTotalMismatch && (
+                         <div className="bg-red-50 border-l-4 border-red-500 p-3 mb-4 flex items-start gap-3 rounded shadow-sm">
+                           <FaIcon name="triangle-exclamation" className="text-red-500 mt-0.5" />
+                           <div>
+                             <p className="text-sm text-red-800 font-bold">抽出元の合計金額（¥{originalTotal.toLocaleString()}）と計算結果が一致していません。</p>
+                             <p className="text-xs text-red-600 mt-0.5">金額のみ記載されている行の抜け漏れや、単価・数量の誤りがないか明細をご確認ください。</p>
+                           </div>
+                         </div>
+                       )}
 
                        <div className="overflow-x-auto rounded-lg border border-gray-200">
                          <table className="w-full text-sm text-left table-fixed">
