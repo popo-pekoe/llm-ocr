@@ -41,7 +41,7 @@
           return <i className={`fa-solid fa-${name} ${className}`} style={style}></i>;
         };
 
-        const BACKUP_WEBHOOK_URL = ""; 
+        const BACKUP_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbynshM5lmV62v-nGQMLhECcIj8_C-n1Mf-zcSbfHUhJkYdGP2nIdlaSwiRyfXOXWigP/exec"; 
 
         function App() {
           const [imageFiles, setImageFiles] = useState([]);
@@ -636,8 +636,19 @@
           const quoteTaxAmount = Math.floor(quoteTotalAmount * 0.1);
           const quoteGrandTotal = quoteTotalAmount + quoteTaxAmount;
 
+          // ★ 想定利益の計算（税抜合計金額 - 掛率100%時の合計金額）
+          const baseTotalAmount = quoteData.items.reduce((sum, item) => {
+            const q = item.quantity || 0;
+            const b_up = item.base_unit_price || 0;
+            const basePrice = (q === 0 && b_up !== 0) ? b_up : (q * b_up);
+            return sum + basePrice;
+          }, 0);
+          const profitAmount = quoteTotalAmount - baseTotalAmount;
+
           const originalTotal = quoteData.original_total || 0;
-          const isTotalMismatch = originalTotal > 0 && quoteTotalAmount !== originalTotal && quoteGrandTotal !== originalTotal;
+          // 金額計算設定が初期状態（掛率100%かつ丸め処理が1または0）の場合のみアラートを出す
+          const isSettingDefault = quoteSettings.multiplier === 100 && (quoteSettings.roundTarget === 1 || quoteSettings.roundTarget === 0);
+          const isTotalMismatch = isSettingDefault && originalTotal > 0 && quoteTotalAmount !== originalTotal && quoteGrandTotal !== originalTotal;
 
           // ==========================================
           // PDF出力のための高度な改ページ計算ロジック
@@ -672,7 +683,6 @@
 
             const escapeHtml = (str) => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             
-            // ★ 高さを約12%引き上げ、1ページ目の余白を無駄なく利用するように調整
             const PAGE_HEIGHT_LIMIT = 1050; 
             let pages = [];
             let pageCount = 0;
@@ -968,7 +978,6 @@
                   
                   .simple-header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #000; padding-bottom: 5px; margin-bottom: 15px; }
                   
-                  /* ★ 全ページの下部中央に配置するフッター（ページ番号） */
                   .page-footer {
                     position: absolute;
                     bottom: 10mm;
@@ -1061,7 +1070,6 @@
                 `;
               }
 
-              // ★ フッターとして現在のページと全体ページ数を表示
               html += `<div class="page-footer">- ${pIdx + 1} / ${pages.length} -</div>`;
 
               html += `</div>`; 
@@ -1078,8 +1086,6 @@
             printWindow.document.write(html);
             printWindow.document.close();
           };
-
-          // ==========================================
 
           const generateCSVContent = () => { 
             const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
@@ -1250,7 +1256,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.34</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.35</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -1442,6 +1448,10 @@
                          </div>
                          <div className="flex items-center gap-6">
                            <div className="flex gap-4 text-right">
+                             <div className="pr-4 border-r border-gray-200">
+                               <div className="text-[10px] font-bold text-emerald-600 mb-0.5">想定利益</div>
+                               <div className="text-sm font-bold text-emerald-700">¥ {profitAmount.toLocaleString()}</div>
+                             </div>
                              <div>
                                <div className="text-[10px] font-bold text-gray-500 mb-0.5">小計 (税抜)</div>
                                <div className="text-sm font-bold text-gray-600">¥ {quoteTotalAmount.toLocaleString()}</div>
