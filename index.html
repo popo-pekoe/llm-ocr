@@ -16,6 +16,9 @@
 
     <!-- PDF.js (PDFの画像化用) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    
+    <!-- html2pdf.js (PDF直接ダウンロード用) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
     <!-- React本体 -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -322,7 +325,7 @@
               contents: [{
                 role: "user",
                 parts: [
-                  { text: "この書類（見積書、請求書、領収書など）の画像を解析し、記載されている情報を抽出してください。特に明細（品名、数量、単価、金額など）がある場合はすべて抽出してください。\n※重要1：金額や数量が記載されていない『区分け』や『見出し』の行（例：「◆解体」「1, 1F和室」など）も絶対に省略せず、そのまま『品名(name)』に入れて1つの明細行として抽出してください。その場合、数量や単価、金額などの数値項目は 0 としてください。\n※重要2：明細の欄外や下部にある「注釈」「コメント」「備考」（例：「※振込手数料はご負担ください」「上記はお見積りとなります」など）も絶対に省略せず、それぞれ独立した1つの明細行として『品名(name)』に入れて抽出してください。その場合も、数量や単価、金額などの数値項目は 0 としてください。\n※重要3：明細欄の最後や途中に「小計」「消費税」「合計」「総合計」といった金額の集計行が含まれている場合がありますが、これらは明細リスト(items)には含めず、完全に無視・除外してください。純粋な個別の品目のみを抽出してください。\nまた、記載があれば「工事名（現場名）」と「現場住所」も抽出してください。ない場合は空欄で構いません。" },
+                  { text: "この書類（見積書、請求書、領収書など）の画像を解析し、記載されている情報を抽出してください。特に明細（品名、数量、単価、金額など）がある場合はすべて抽出してください。\n※重要1：金額や数量が記載されていない『区分け』や『見出し』の行（例：「◆解体」「1, 1F和室」など）も絶対に省略せず、そのまま『品名(name)』に入れて1つの明細行として抽出してください。その場合、数量や単価、金額などの数値項目は 0 としてください。\n※重要2：明細の欄外や下部にある「注釈」「コメント」「備考」（例：「※振込手数料はご負担ください」「上記はお見積りとなります」など）も絶対に省略せず、それぞれ独立した1つの明細行として『品名(name)』に入れて抽出してください。その場合も、数量や単価、金額などの数値項目は 0 としてください。\n※重要3：明細欄の最後や途中に「小計」「消費税」「合計」「総合計」といった金額の集計行が含まれている場合がありますが、これらは明細リスト(items)には含めず、完全に無視・除外してください。純粋な個別の品目のみを抽出してください。\n※重要4：数字の頭に「▲」や「-」がついている場合（例：「▲1,000」「-500」など）は、マイナス（負の数）として数値化してください（例：-1000）。また、品名がなく「▲」や「-」の記号のみの行や、「値引き」に関する行は、値引き項目として扱い、金額をマイナスとして抽出してください。\nまた、記載があれば「工事名（現場名）」と「現場住所」も抽出してください。ない場合は空欄で構いません。" },
                   { inlineData: { mimeType: mimeType, data: base64Data } }
                 ]
               }],
@@ -636,7 +639,6 @@
           const quoteTaxAmount = Math.floor(quoteTotalAmount * 0.1);
           const quoteGrandTotal = quoteTotalAmount + quoteTaxAmount;
 
-          // ★ 想定利益の計算（税抜合計金額 - 掛率100%時の合計金額）
           const baseTotalAmount = quoteData.items.reduce((sum, item) => {
             const q = item.quantity || 0;
             const b_up = item.base_unit_price || 0;
@@ -646,7 +648,6 @@
           const profitAmount = quoteTotalAmount - baseTotalAmount;
 
           const originalTotal = quoteData.original_total || 0;
-          // 金額計算設定が初期状態（掛率100%かつ丸め処理が1または0）の場合のみアラートを出す
           const isSettingDefault = quoteSettings.multiplier === 100 && (quoteSettings.roundTarget === 1 || quoteSettings.roundTarget === 0);
           const isTotalMismatch = isSettingDefault && originalTotal > 0 && quoteTotalAmount !== originalTotal && quoteGrandTotal !== originalTotal;
 
@@ -683,7 +684,7 @@
 
             const escapeHtml = (str) => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             
-            const PAGE_HEIGHT_LIMIT = 1050; 
+            const PAGE_HEIGHT_LIMIT = 940; 
             let pages = [];
             let pageCount = 0;
             
@@ -907,18 +908,174 @@
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
           };
 
+          // ★ 新設: PDFとして直接ダウンロード保存する機能
+          const downloadQuotePDF = () => {
+            if (typeof window.html2pdf === 'undefined') {
+              setError("PDF生成ライブラリが読み込まれていません。画面を再読み込みしてください。");
+              return;
+            }
+            
+            setToastMessage("PDFファイルを生成してダウンロードします...");
+            
+            const pages = calculatePagesForQuote();
+            
+            const container = document.createElement('div');
+            container.style.cssText = 'width: 210mm; background: #fff; padding: 0; margin: 0;';
+            
+            // 画面上に一瞬だけ配置しないと画像化されないため、視界外のラッパーに配置
+            const wrapper = document.createElement('div');
+            wrapper.style.cssText = 'position: absolute; left: -9999px; top: -9999px;';
+            wrapper.appendChild(container);
+            document.body.appendChild(wrapper);
+            
+            let htmlContent = `
+              <style>
+                .pdf-page { width: 210mm; height: 297mm; padding: 15mm; font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; color: #000; box-sizing: border-box; position: relative; background: #fff; page-break-after: always; }
+                .pdf-title { text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 8px; margin-bottom: 15px; }
+                .header-wrap { display: flex; justify-content: space-between; margin-bottom: 15px; }
+                .left-col { width: 55%; }
+                .right-col { width: 40%; text-align: right; }
+                .recipient { font-size: 18px; border-bottom: 1px solid #000; padding-bottom: 3px; margin-bottom: 10px; display: inline-block; min-width: 80%; }
+                .info-row { display: flex; margin-bottom: 3px; }
+                .info-label { width: 70px; color: #333; }
+                .info-value { flex: 1; }
+                .total-box { margin-top: 20px; font-size: 18px; font-weight: bold; border-bottom: 3px double #000; display: inline-block; padding: 5px 20px 5px 0; }
+                .company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; }
+                table.items { width: 100%; border-collapse: collapse; border: 1px solid #000; margin-bottom: 10px;}
+                table.items th, table.items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 4px 6px; word-break: break-all; }
+                table.items th { background-color: #f5f5f5; text-align: center; border-bottom: 1px solid #000; border-top: 1px solid #000; }
+                table.items tbody tr:last-child td { border-bottom: 1px solid #000; }
+                .summary-table { width: 35%; border-collapse: collapse; border: 1px solid #000; margin-top: 10px; float: right; }
+                .summary-table th, .summary-table td { border: 1px solid #000; padding: 4px 6px; }
+                .summary-table th { background: #f5f5f5; text-align: center; width: 40%; }
+                .summary-table td { text-align: right; }
+                .text-right { text-align: right; }
+                .text-center { text-align: center; }
+                .simple-header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #000; padding-bottom: 5px; margin-bottom: 15px; }
+                .page-footer { position: absolute; bottom: 10mm; left: 0; width: 100%; text-align: center; font-size: 12px; color: #555; }
+              </style>
+            `;
+
+            const escapeHtml = (str) => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+            pages.forEach((page, pIdx) => {
+              htmlContent += `<div class="pdf-page">`;
+              
+              if (page.isFirst) {
+                htmlContent += `
+                  <div class="pdf-title">御見積書</div>
+                  <div class="header-wrap">
+                    <div class="left-col">
+                      <div class="recipient">${escapeHtml(quoteData.recipient)} ${escapeHtml(quoteData.honorific)}</div>
+                      <div>下記の通り御見積申し上げます。</div>
+                      <div class="total-box">御見積金額：¥${quoteGrandTotal.toLocaleString()} - (税込)</div>
+                      <div style="margin-top: 10px;">
+                        <div class="info-row"><div class="info-label">工事名：</div><div class="info-value">${escapeHtml(quoteData.project_name)}</div></div>
+                        <div class="info-row"><div class="info-label">現場住所：</div><div class="info-value">${escapeHtml(quoteData.project_address)}</div></div>
+                        <div class="info-row" style="margin-top: 6px;"><div class="info-label" style="font-size: 10px;">有効期限：</div><div class="info-value" style="font-size: 10px;">発行日より30日間</div></div>
+                      </div>
+                    </div>
+                    <div class="right-col">
+                      <div style="margin-bottom: 10px;">発行日：${escapeHtml(quoteData.date)}</div>
+                      <div class="company-name">${escapeHtml(myCompany.name)}</div>
+                      <div>〒${escapeHtml(myCompany.zip)}</div>
+                      <div>${escapeHtml(myCompany.address)}</div>
+                      <div>TEL：${escapeHtml(myCompany.tel)}</div>
+                      <div style="margin-top: 5px;">担当：${escapeHtml(myCompany.person)}</div>
+                    </div>
+                  </div>
+                `;
+              } else {
+                htmlContent += `
+                  <div class="simple-header">
+                    <div class="left-col">
+                      <div style="font-weight: bold; font-size: 14px; margin-bottom: 5px;">御見積書 (${pIdx + 1}/${pages.length})</div>
+                      <div>宛名：${escapeHtml(quoteData.recipient)} ${escapeHtml(quoteData.honorific)}</div>
+                      <div>工事名：${escapeHtml(quoteData.project_name)}</div>
+                    </div>
+                    <div class="right-col">
+                      <div>発行日：${escapeHtml(quoteData.date)}</div>
+                      <div style="font-weight: bold;">${escapeHtml(myCompany.name)}</div>
+                    </div>
+                  </div>
+                `;
+              }
+
+              htmlContent += `
+                <table class="items">
+                  <thead><tr><th style="width: 5%;">No</th><th style="width: 40%;">品名・仕様</th><th style="width: 10%;">数量</th><th style="width: 10%;">単位</th><th style="width: 15%;">単価</th><th style="width: 20%;">金額</th></tr></thead>
+                  <tbody>
+              `;
+
+              page.items.forEach((item) => {
+                const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
+                htmlContent += `
+                  <tr>
+                    <td class="text-center">${item.originalIndex + 1}</td>
+                    <td>${escapeHtml(item.name)}</td>
+                    <td class="text-right">${qText}</td>
+                    <td class="text-center">${escapeHtml(item.unit)}</td>
+                    <td class="text-right">${item.unit_price ? '¥' + item.unit_price.toLocaleString() : ''}</td>
+                    <td class="text-right">${item.price ? '¥' + item.price.toLocaleString() : ''}</td>
+                  </tr>
+                `;
+              });
+
+              htmlContent += `</tbody></table>`;
+
+              if (page.hasSummary) {
+                htmlContent += `
+                  <div style="clear: both; overflow: hidden;">
+                    <table class="summary-table">
+                      <tr><th>小計 (税抜)</th><td>¥${quoteTotalAmount.toLocaleString()}</td></tr>
+                      <tr><th>消費税 (10%)</th><td>¥${quoteTaxAmount.toLocaleString()}</td></tr>
+                      <tr><th>合計 (税込)</th><td style="font-weight: bold; font-size: 14px;">¥${quoteGrandTotal.toLocaleString()}</td></tr>
+                    </table>
+                  </div>
+                `;
+              }
+
+              htmlContent += `<div class="page-footer">- ${pIdx + 1} / ${pages.length} -</div>`;
+              htmlContent += `</div>`; 
+            });
+
+            container.innerHTML = htmlContent;
+
+            const safeFileName = quoteData.recipient ? `御見積書_${quoteData.recipient}.pdf` : `御見積書.pdf`;
+
+            const opt = {
+              margin:       0,
+              filename:     safeFileName,
+              image:        { type: 'jpeg', quality: 0.98 },
+              html2canvas:  { scale: 2, useCORS: true, logging: false },
+              jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            };
+
+            window.html2pdf().set(opt).from(container).save().then(() => {
+              document.body.removeChild(wrapper);
+              setToastMessage("PDFの保存が完了しました");
+              setTimeout(() => setToastMessage(null), 3000);
+            }).catch(err => {
+              document.body.removeChild(wrapper);
+              setError("PDFの生成に失敗しました: " + err.message);
+            });
+          };
+
           const printQuotePDF = () => {
             const printWindow = window.open('', '_blank');
             if (!printWindow) { setError("ポップアップがブロックされました。"); return; }
             
             const pages = calculatePagesForQuote();
             
+            // ★ ブラウザの機能で保存する際にも、ファイル名が自動で分かりやすくなるようにタイトルを設定
+            const safeTitle = quoteData.recipient ? `御見積書_${quoteData.recipient}` : `御見積書`;
+            
             let html = `
               <!DOCTYPE html>
               <html lang="ja">
               <head>
                 <meta charset="UTF-8">
-                <title>御見積書</title>
+                <title>${safeTitle}</title>
                 <style>
                   @page { size: A4 portrait; margin: 0; }
                   body { font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; color: #000; margin: 0; padding: 0; background: #525659; }
@@ -977,16 +1134,7 @@
                   .text-center { text-align: center; }
                   
                   .simple-header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #000; padding-bottom: 5px; margin-bottom: 15px; }
-                  
-                  .page-footer {
-                    position: absolute;
-                    bottom: 10mm;
-                    left: 0;
-                    width: 100%;
-                    text-align: center;
-                    font-size: 12px;
-                    color: #555;
-                  }
+                  .page-footer { position: absolute; bottom: 10mm; left: 0; width: 100%; text-align: center; font-size: 12px; color: #555; }
                 </style>
               </head>
               <body>
@@ -1001,22 +1149,22 @@
                   <div class="title">御見積書</div>
                   <div class="header-wrap">
                     <div class="left-col">
-                      <div class="recipient">${quoteData.recipient || '　　　　　　　　　　'} ${quoteData.honorific || ''}</div>
+                      <div class="recipient">${escapeHtml(quoteData.recipient)} ${escapeHtml(quoteData.honorific)}</div>
                       <div>下記の通り御見積申し上げます。</div>
                       <div class="total-box">御見積金額：¥${quoteGrandTotal.toLocaleString()} - (税込)</div>
                       <div style="margin-top: 10px;">
-                        <div class="info-row"><div class="info-label">工事名：</div><div class="info-value">${quoteData.project_name || ''}</div></div>
-                        <div class="info-row"><div class="info-label">現場住所：</div><div class="info-value">${quoteData.project_address || ''}</div></div>
+                        <div class="info-row"><div class="info-label">工事名：</div><div class="info-value">${escapeHtml(quoteData.project_name)}</div></div>
+                        <div class="info-row"><div class="info-label">現場住所：</div><div class="info-value">${escapeHtml(quoteData.project_address)}</div></div>
                         <div class="info-row" style="margin-top: 6px;"><div class="info-label" style="font-size: 10px;">有効期限：</div><div class="info-value" style="font-size: 10px;">発行日より30日間</div></div>
                       </div>
                     </div>
                     <div class="right-col">
-                      <div style="margin-bottom: 10px;">発行日：${quoteData.date || ''}</div>
-                      <div class="company-name">${myCompany.name || ''}</div>
-                      <div>〒${myCompany.zip || ''}</div>
-                      <div>${myCompany.address || ''}</div>
-                      <div>TEL：${myCompany.tel || ''}</div>
-                      <div style="margin-top: 5px;">担当：${myCompany.person || ''}</div>
+                      <div style="margin-bottom: 10px;">発行日：${escapeHtml(quoteData.date)}</div>
+                      <div class="company-name">${escapeHtml(myCompany.name)}</div>
+                      <div>〒${escapeHtml(myCompany.zip)}</div>
+                      <div>${escapeHtml(myCompany.address)}</div>
+                      <div>TEL：${escapeHtml(myCompany.tel)}</div>
+                      <div style="margin-top: 5px;">担当：${escapeHtml(myCompany.person)}</div>
                     </div>
                   </div>
                 `;
@@ -1025,12 +1173,12 @@
                   <div class="simple-header">
                     <div class="left-col">
                       <div style="font-weight: bold; font-size: 14px; margin-bottom: 5px;">御見積書 (${pIdx + 1}/${pages.length})</div>
-                      <div>宛名：${quoteData.recipient || ''} ${quoteData.honorific || ''}</div>
-                      <div>工事名：${quoteData.project_name || ''}</div>
+                      <div>宛名：${escapeHtml(quoteData.recipient)} ${escapeHtml(quoteData.honorific)}</div>
+                      <div>工事名：${escapeHtml(quoteData.project_name)}</div>
                     </div>
                     <div class="right-col">
-                      <div>発行日：${quoteData.date || ''}</div>
-                      <div style="font-weight: bold;">${myCompany.name || ''}</div>
+                      <div>発行日：${escapeHtml(quoteData.date)}</div>
+                      <div style="font-weight: bold;">${escapeHtml(myCompany.name)}</div>
                     </div>
                   </div>
                 `;
@@ -1047,9 +1195,9 @@
                 html += `
                   <tr>
                     <td class="text-center">${item.originalIndex + 1}</td>
-                    <td>${item.name || ''}</td>
+                    <td>${escapeHtml(item.name)}</td>
                     <td class="text-right">${qText}</td>
-                    <td class="text-center">${item.unit || ''}</td>
+                    <td class="text-center">${escapeHtml(item.unit)}</td>
                     <td class="text-right">${item.unit_price ? '¥' + item.unit_price.toLocaleString() : ''}</td>
                     <td class="text-right">${item.price ? '¥' + item.price.toLocaleString() : ''}</td>
                   </tr>
@@ -1071,14 +1219,14 @@
               }
 
               html += `<div class="page-footer">- ${pIdx + 1} / ${pages.length} -</div>`;
-
               html += `</div>`; 
             });
 
             html += `
                 </div>
                 <script>
-                  window.onload = function() { setTimeout(function() { window.print(); setTimeout(function() { window.close(); }, 500); }, 500); };
+                  // ★ 印刷後もウィンドウを自動で閉じないようにし、再操作やPDF保存を可能にする
+                  window.onload = function() { setTimeout(function() { window.print(); }, 500); };
                 <\/script>
               </body>
               </html>
@@ -1086,6 +1234,8 @@
             printWindow.document.write(html);
             printWindow.document.close();
           };
+
+          // ==========================================
 
           const generateCSVContent = () => { 
             const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
@@ -1256,7 +1406,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.35</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.36</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -1340,7 +1490,11 @@
                         </div>
                       </div>
                       <div className="flex-grow overflow-y-auto relative">{renderFormContent(true)}</div>
-                      <div className="absolute right-0 bottom-0 w-4 h-4 cursor-se-resize z-20" onMouseDown={(e)=>startResize(e,'panel-se')} onTouchStart={(e)=>startResize(e,'panel-se')}></div>
+                      <div className="absolute right-0 bottom-0 w-6 h-6 cursor-se-resize z-20 flex justify-end items-end p-1 text-gray-400 hover:text-blue-500" onMouseDown={(e)=>startResize(e,'panel-se')} onTouchStart={(e)=>startResize(e,'panel-se')}>
+                        <FaIcon name="caret-down" className="rotate-[-45deg]" />
+                      </div>
+                      <div className="absolute right-0 top-0 w-2 h-full cursor-e-resize z-20 hover:bg-blue-400/20" onMouseDown={(e)=>startResize(e,'panel-e')} onTouchStart={(e)=>startResize(e,'panel-e')}></div>
+                      <div className="absolute left-0 bottom-0 w-full h-2 cursor-s-resize z-20 hover:bg-blue-400/20" onMouseDown={(e)=>startResize(e,'panel-s')} onTouchStart={(e)=>startResize(e,'panel-s')}></div>
                     </div>
                   </div>
                 )}
@@ -1355,13 +1509,18 @@
                     </h2>
                     <div className="flex gap-2">
                         <button onClick={exportQuoteExcel} className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold shadow-sm text-sm">
-                          <FaIcon name="file-excel"/> Excel形式で保存 (.xls)
+                          <FaIcon name="file-excel"/> Excel
                         </button>
                         <button onClick={copyQuoteTSVToClipboard} className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold shadow-sm text-sm">
-                          <FaIcon name="copy"/> 全体をTSVコピー
+                          <FaIcon name="copy"/> TSV
                         </button>
-                        <button onClick={printQuotePDF} className="flex items-center gap-2 px-4 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold shadow-sm text-sm">
-                          <FaIcon name="file-pdf"/> PDF発行(印刷)
+                        {/* ★ 新設: PDF保存ボタン */}
+                        <button onClick={downloadQuotePDF} className="flex items-center gap-2 px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 font-bold shadow-sm text-sm">
+                          <FaIcon name="file-pdf"/> PDF保存
+                        </button>
+                        {/* ★ 改良: 印刷ボタン */}
+                        <button onClick={printQuotePDF} className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold shadow-sm text-sm">
+                          <FaIcon name="print"/> 印刷
                         </button>
                         <div className="w-px bg-gray-300 mx-1"></div>
                         <button onClick={() => setIsQuoteEditorOpen(false)} className="flex items-center gap-2 px-3 py-1.5 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-bold text-sm">
