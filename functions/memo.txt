@@ -1,0 +1,6 @@
+api設置に関して
+
+cloudflareログイン＞workers&pages＞settings＞Build＞Variables and secrets
+add
+variable name:GEMINI_API_KEY
+value:AQ------------
