@@ -44,7 +44,7 @@
           return <i className={`fa-solid fa-${name} ${className}`} style={style}></i>;
         };
 
-        const BACKUP_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbynshM5lmV62v-nGQMLhECcIj8_C-n1Mf-zcSbfHUhJkYdGP2nIdlaSwiRyfXOXWigP/exec"; 
+        const BACKUP_WEBHOOK_URL = ""; 
 
         function App() {
           const [imageFiles, setImageFiles] = useState([]);
@@ -320,7 +320,6 @@
             });
           };
 
-          // ★ 抽出結果に対するデータ整形関数（数量や単価の補完を確実に行う）
           const processParsedData = (parsedData) => {
             if (!parsedData.items) return parsedData;
             
@@ -329,11 +328,9 @@
               let up = item.unit_price || 0;
               let p = item.price || 0;
               
-              // 数量が0または空欄の場合、強制的に1にする（値引き項目や一式項目などへの対応）
               if (q === 0 || q === "" || q == null) {
                 q = 1;
               }
-              // 単価が0で金額が入っている場合、単価に金額を移す
               if (up === 0 && p !== 0) {
                 up = p;
               }
@@ -385,7 +382,7 @@
                 const textResult = data.candidates?.[0]?.content?.parts?.[0]?.text;
                 if (textResult) {
                   const rawData = JSON.parse(textResult);
-                  return processParsedData(rawData); // ★ ここで抽出データをすぐに補完処理に通す
+                  return processParsedData(rawData); 
                 }
                 throw new Error("データの抽出に失敗しました。");
               } catch (err) {
@@ -536,6 +533,23 @@
             dragItemIndex.current = null; dragOverItemIndex.current = null;
           };
 
+          // ★ 新設: 白紙から見積書を作成する処理
+          const createBlankQuote = () => {
+            setQuoteSettings(prev => ({...prev, multiplier: 100}));
+            setQuoteData({
+              recipient: '',
+              honorific: '御中',
+              project_name: '',
+              project_address: '',
+              date: new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '/'),
+              original_total: 0,
+              items: [
+                { name: "", quantity: 1, unit: "", unit_price: 0, base_unit_price: 0, price: 0 }
+              ]
+            });
+            setIsQuoteEditorOpen(true);
+          };
+
           const openQuoteEditor = () => {
             const analyzedDataList = extractedDataList.filter(d => d.isAnalyzed);
             if (analyzedDataList.length === 0) {
@@ -564,7 +578,7 @@
               original_total: originalTotal,
               items: allItems.map(item => {
                 let q = item.quantity;
-                if (q === 0 || q === "" || q == null) q = 1; // 念のための補完
+                if (q === 0 || q === "" || q == null) q = 1; 
                 let up = item.unit_price || 0;
                 let p = item.price || 0;
 
@@ -774,10 +788,11 @@
             
             quoteData.items.forEach((item, index) => {
               const tr = document.createElement('tr');
+              const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
               tr.innerHTML = `
                 <td style="text-align:center;">${index + 1}</td>
                 <td>${escapeHtml(item.name)}</td>
-                <td style="text-align:right;">${item.quantity || ''}</td>
+                <td style="text-align:right;">${qText}</td>
                 <td style="text-align:center;">${escapeHtml(item.unit)}</td>
                 <td style="text-align:right;">${item.unit_price ? '¥' + item.unit_price.toLocaleString() : ''}</td>
                 <td style="text-align:right;">${item.price ? '¥' + item.price.toLocaleString() : ''}</td>
@@ -818,7 +833,6 @@
             return pages;
           };
 
-          // ★ 新設: PDFとして直接ダウンロード保存する機能
           const downloadQuotePDF = () => {
             if (typeof window.html2pdf === 'undefined') {
               setError("PDF生成ライブラリが読み込まれていません。画面を再読み込みしてください。");
@@ -837,7 +851,6 @@
             wrapper.appendChild(container);
             document.body.appendChild(wrapper);
             
-            // ★ .pdf-page:last-child に page-break-after: avoid を追加し白紙を防止
             let htmlContent = `
               <style>
                 .pdf-page { width: 210mm; padding: 15mm; font-family: "Noto Sans JP", sans-serif; font-size: 12px; line-height: 1.4; color: #000; box-sizing: border-box; position: relative; background: #fff; page-break-after: always; break-after: page; }
@@ -870,8 +883,6 @@
             const escapeHtml = (str) => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
             pages.forEach((page, pIdx) => {
-              // html2pdfでは高さで自動分割させる方法もあるが、計算済みのページで区切る
-              // 最後のページには改ページ指示を入れない
               const pageStyle = pIdx === pages.length - 1 ? 'page-break-after: avoid; break-after: avoid;' : '';
               htmlContent += `<div class="pdf-page" style="${pageStyle}">`;
               
@@ -922,11 +933,12 @@
               `;
 
               page.items.forEach((item) => {
+                const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
                 htmlContent += `
                   <tr>
                     <td class="text-center">${item.originalIndex + 1}</td>
                     <td>${escapeHtml(item.name)}</td>
-                    <td class="text-right">${item.quantity || ''}</td>
+                    <td class="text-right">${qText}</td>
                     <td class="text-center">${escapeHtml(item.unit)}</td>
                     <td class="text-right">${item.unit_price ? '¥' + item.unit_price.toLocaleString() : ''}</td>
                     <td class="text-right">${item.price ? '¥' + item.price.toLocaleString() : ''}</td>
@@ -975,7 +987,6 @@
             });
           };
 
-          // ★ 印刷ボタン用処理 (スクリプト実行タイミングとCSSを修正)
           const printQuotePDF = () => {
             const printWindow = window.open('', '_blank');
             if (!printWindow) { setError("ポップアップがブロックされました。"); return; }
@@ -1011,7 +1022,6 @@
                     margin-bottom: 0;
                   }
                   
-                  /* ★ 印刷時は不要なスタイルを消去し、高さを自動にする */
                   @media print { 
                     body, html { background: none; margin: 0; padding: 0; } 
                     #print-container { padding: 0; margin: 0; } 
@@ -1109,11 +1119,12 @@
               `;
 
               page.items.forEach((item) => {
+                const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
                 html += `
                   <tr>
                     <td class="text-center">${item.originalIndex + 1}</td>
                     <td>${escapeHtml(item.name)}</td>
-                    <td class="text-right">${item.quantity || ''}</td>
+                    <td class="text-right">${qText}</td>
                     <td class="text-center">${escapeHtml(item.unit)}</td>
                     <td class="text-right">${item.unit_price ? '¥' + item.unit_price.toLocaleString() : ''}</td>
                     <td class="text-right">${item.price ? '¥' + item.price.toLocaleString() : ''}</td>
@@ -1141,7 +1152,6 @@
 
             html += `
                 </div>
-                <!-- ★ window.onloadではなく、直接setTimeoutを実行することで確実に印刷ダイアログを開く -->
                 <script>
                   setTimeout(function() { window.print(); }, 800);
                 <\/script>
@@ -1175,7 +1185,8 @@
             tsvContent += "No.\t品名・仕様\t数量\t単位\t単価\t金額\n";
             quoteData.items.forEach((item, index) => {
               const name = escapeTSV(item.name); const unit = escapeTSV(item.unit);
-              tsvContent += `${index + 1}\t${name}\t${item.quantity || ''}\t${unit}\t${item.unit_price || ''}\t${item.price || ''}\n`;
+              const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
+              tsvContent += `${index + 1}\t${name}\t${qText}\t${unit}\t${item.unit_price || ''}\t${item.price || ''}\n`;
             });
             try {
               const textArea = document.createElement("textarea"); textArea.value = tsvContent; document.body.appendChild(textArea); textArea.select(); document.execCommand("copy"); textArea.remove();
@@ -1234,11 +1245,12 @@
             `;
 
             quoteData.items.forEach((item, idx) => {
+              const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
               tableHtml += `
                 <tr>
                   <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${idx + 1}</td>
                   <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000;">${item.name || ''}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.quantity || ''}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${qText}</td>
                   <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${item.unit || ''}</td>
                   <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.unit_price || ''}</td>
                   <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.price || ''}</td>
@@ -1264,8 +1276,6 @@
             const a = document.createElement('a'); a.href = url; a.download = 'quote_document.xls';
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
           };
-
-          // ==========================================
 
           const generateCSVContent = () => { 
             const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
@@ -1436,7 +1446,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.37</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.38</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -1482,8 +1492,13 @@
                       <FaIcon name={isUploading ? "spinner" : "upload"} size={16} className={isUploading ? "fa-spin" : ""} /> 
                       {isUploading ? '読み込み中...' : (imageFiles.length > 0 ? `${imageFiles.length}枚のファイルを読込済み` : '画像/PDFを選択(複数可)')}
                     </button>
+                    {/* ★ 新設: 白紙から作成ボタン */}
+                    <button onClick={createBlankQuote} className="flex items-center gap-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-md hover:bg-indigo-100 font-bold shadow-sm transition-colors">
+                      <FaIcon name="file-pen" size={16} />
+                      白紙から見積書を作成
+                    </button>
                     {imageFiles.length > 0 && (
-                      <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 p-1.5 rounded-lg">
+                      <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 p-1.5 rounded-lg ml-2">
                         <button disabled={currentFileIndex === 0 || isAnalyzingAll} onClick={() => setCurrentFileIndex(i => i - 1)} className="p-1.5 text-gray-500 hover:bg-gray-200 rounded disabled:opacity-30"><FaIcon name="chevron-left" /></button>
                         <div className="text-sm font-medium w-32 text-center flex flex-col items-center"><span className="text-gray-700">{currentFileIndex + 1} / {imageFiles.length}</span><span className="text-xs text-gray-400 truncate w-full" title={imageFiles[currentFileIndex].name}>{imageFiles[currentFileIndex].name}</span></div>
                         <button disabled={currentFileIndex === imageFiles.length - 1 || isAnalyzingAll} onClick={() => setCurrentFileIndex(i => i + 1)} className="p-1.5 text-gray-500 hover:bg-gray-200 rounded disabled:opacity-30"><FaIcon name="chevron-right" /></button>
