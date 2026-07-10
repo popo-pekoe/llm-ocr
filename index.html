@@ -251,23 +251,8 @@
             return newFiles;
           };
 
-          const handleUploadBtnClick = () => {
-            setIsUploading(true);
-            setTimeout(() => {
-              if (fileInputRef.current) fileInputRef.current.click();
-              
-              const handleFocus = () => {
-                setTimeout(() => {
-                  setIsUploading(false);
-                }, 500); 
-                window.removeEventListener('focus', handleFocus);
-              };
-              window.addEventListener('focus', handleFocus);
-            }, 50);
-          };
-
-          const handleImageUpload = async (e) => {
-            const files = Array.from(e.target.files);
+          // ★ 画像やPDFを一括処理する関数 (ペースト時にも共通利用)
+          const processFiles = async (files) => {
             if (files.length === 0) return;
             
             setIsUploading(true);
@@ -293,13 +278,65 @@
               setImageFiles(processedFiles);
               setExtractedDataList(processedFiles.map(() => ({ ...defaultData })));
               setCurrentFileIndex(0);
-              setToastMessage(null);
+              setToastMessage("画像を読み込みました");
+              setTimeout(() => setToastMessage(null), 3000);
             }
             
             setIsUploading(false);
             setLoading(false);
             if (fileInputRef.current) fileInputRef.current.value = '';
           };
+
+          const handleUploadBtnClick = () => {
+            setIsUploading(true);
+            setTimeout(() => {
+              if (fileInputRef.current) fileInputRef.current.click();
+              const handleFocus = () => {
+                setTimeout(() => setIsUploading(false), 500); 
+                window.removeEventListener('focus', handleFocus);
+              };
+              window.addEventListener('focus', handleFocus);
+            }, 50);
+          };
+
+          const handleImageUpload = async (e) => {
+            const files = Array.from(e.target.files);
+            await processFiles(files);
+          };
+
+          // ★ ペーストイベント監視用のRef
+          const processFilesRef = useRef(processFiles);
+          processFilesRef.current = processFiles;
+
+          // ★ クリップボードからの画像貼り付けに対応
+          useEffect(() => {
+            const handlePaste = (e) => {
+              // テキスト入力中の場合はペーストイベントを奪わない
+              const activeElement = document.activeElement;
+              if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+                return;
+              }
+
+              const items = e.clipboardData?.items;
+              if (!items) return;
+
+              const files = [];
+              for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                  const blob = items[i].getAsFile();
+                  const file = new File([blob], `Pasted_Image_${new Date().getTime()}.png`, { type: blob.type });
+                  files.push(file);
+                }
+              }
+
+              if (files.length > 0 && processFilesRef.current) {
+                processFilesRef.current(files);
+              }
+            };
+
+            window.addEventListener('paste', handlePaste);
+            return () => window.removeEventListener('paste', handlePaste);
+          }, []);
 
           useEffect(() => {
             if (imageFiles.length > 0 && imageFiles[currentFileIndex]) {
@@ -533,7 +570,6 @@
             dragItemIndex.current = null; dragOverItemIndex.current = null;
           };
 
-          // ★ 新設: 白紙から見積書を作成する処理
           const createBlankQuote = () => {
             setQuoteSettings(prev => ({...prev, multiplier: 100}));
             setQuoteData({
@@ -1162,121 +1198,6 @@
             printWindow.document.close();
           };
 
-          const copyQuoteTSVToClipboard = () => {
-            const escapeTSV = (str) => String(str || '').replace(/\t/g, ' ').replace(/\n/g, ' ');
-            let tsvContent = `御見積書\n\n`;
-            tsvContent += `宛名\t${escapeTSV(quoteData.recipient)} ${escapeTSV(quoteData.honorific)}\n`;
-            tsvContent += `工事名\t${escapeTSV(quoteData.project_name)}\n`;
-            tsvContent += `現場住所\t${escapeTSV(quoteData.project_address)}\n`;
-            tsvContent += `発行日\t${escapeTSV(quoteData.date)}\n`;
-            tsvContent += `有効期限\t発行日より30日間\n\n`;
-            
-            tsvContent += `自社情報\n`;
-            tsvContent += `会社名\t${escapeTSV(myCompany.name)}\n`;
-            tsvContent += `郵便番号\t${escapeTSV(myCompany.zip)}\n`;
-            tsvContent += `住所\t${escapeTSV(myCompany.address)}\n`;
-            tsvContent += `電話番号\t${escapeTSV(myCompany.tel)}\n`;
-            tsvContent += `担当者\t${escapeTSV(myCompany.person)}\n\n`;
-
-            tsvContent += `御見積合計金額 (税込)\t${quoteGrandTotal}\n`;
-            tsvContent += `小計 (税抜)\t${quoteTotalAmount}\n`;
-            tsvContent += `消費税 (10%)\t${quoteTaxAmount}\n\n`;
-
-            tsvContent += "No.\t品名・仕様\t数量\t単位\t単価\t金額\n";
-            quoteData.items.forEach((item, index) => {
-              const name = escapeTSV(item.name); const unit = escapeTSV(item.unit);
-              const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
-              tsvContent += `${index + 1}\t${name}\t${qText}\t${unit}\t${item.unit_price || ''}\t${item.price || ''}\n`;
-            });
-            try {
-              const textArea = document.createElement("textarea"); textArea.value = tsvContent; document.body.appendChild(textArea); textArea.select(); document.execCommand("copy"); textArea.remove();
-              setToastMessage("見積書全体をTSV形式でコピーしました"); setTimeout(() => setToastMessage(null), 3000);
-            } catch (err) { setError("コピーに失敗しました。"); }
-          };
-
-          const exportQuoteExcel = () => {
-            alert("Excelファイルをダウンロードします。\n\n【印刷時のご注意】\n明細が多く複数ページにわたる場合は、ダウンロードしたExcelファイルを開き、『ページレイアウト』タブから『改ページの挿入』を行って区切り位置を調整してください。\nまたは、必要に応じて2ページ目以降の明細を別のシートへコピー＆ペーストして、印刷レイアウトを整えてください。");
-
-            let tableHtml = `
-              <table border="0" style="font-family: 'Meiryo', sans-serif; font-size: 11pt; width: 100%;">
-                <colgroup>
-                  <col style="width: 5%;" />
-                  <col style="width: 40%;" />
-                  <col style="width: 10%;" />
-                  <col style="width: 10%;" />
-                  <col style="width: 15%;" />
-                  <col style="width: 20%;" />
-                </colgroup>
-                <tr><td colspan="6" style="text-align: center; font-size: 18pt; font-weight: bold; border-bottom: 1px solid #000;">御見積書</td></tr>
-                <tr><td colspan="6"></td></tr>
-                <tr>
-                  <td colspan="3" style="font-size: 14pt; border-bottom: 1px solid #000;">${quoteData.recipient || '　　　　　　　'} ${quoteData.honorific || ''}</td>
-                  <td colspan="3" style="text-align: right;">発行日: ${quoteData.date || ''}</td>
-                </tr>
-                <tr>
-                  <td colspan="3">下記の通り御見積申し上げます。</td>
-                  <td colspan="3" style="text-align: right; font-weight: bold; font-size: 12pt;">${myCompany.name || ''}</td>
-                </tr>
-                <tr>
-                  <td colspan="3" style="font-size: 16pt; font-weight: bold; border-bottom: 3px double #000;">御見積金額：¥${quoteGrandTotal.toLocaleString()} -</td>
-                  <td colspan="3" style="text-align: right;">〒${myCompany.zip || ''}</td>
-                </tr>
-                <tr>
-                  <td colspan="3">工事名: ${quoteData.project_name || ''}</td>
-                  <td colspan="3" style="text-align: right;">${myCompany.address || ''}</td>
-                </tr>
-                <tr>
-                  <td colspan="3">現場住所: ${quoteData.project_address || ''}</td>
-                  <td colspan="3" style="text-align: right;">TEL: ${myCompany.tel || ''}</td>
-                </tr>
-                <tr>
-                  <td colspan="3" style="font-size: 10pt; color: #555;">見積有効期限: 発行日より30日間</td>
-                  <td colspan="3" style="text-align: right;">担当: ${myCompany.person || ''}</td>
-                </tr>
-                <tr><td colspan="6"></td></tr>
-                <tr>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">No.</th>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">品名・仕様</th>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">数量</th>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">単位</th>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">単価</th>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">金額</th>
-                </tr>
-            `;
-
-            quoteData.items.forEach((item, idx) => {
-              const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
-              tableHtml += `
-                <tr>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${idx + 1}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000;">${item.name || ''}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${qText}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${item.unit || ''}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.unit_price || ''}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.price || ''}</td>
-                </tr>
-              `;
-            });
-
-            tableHtml += `
-                <tr><td colspan="6" style="border-top: 1px solid #000;"></td></tr>
-                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">小計 (税抜)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTotalAmount.toLocaleString()}</td></tr>
-                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">消費税 (10%)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTaxAmount.toLocaleString()}</td></tr>
-                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">合計 (税込)</th><td style="border: 1px solid #000; text-align: right; font-weight: bold;">¥${quoteGrandTotal.toLocaleString()}</td></tr>
-              </table>
-            `;
-
-            const htmlStr = `
-            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-            <head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>御見積書</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head>
-            <body>${tableHtml}</body></html>`;
-
-            const blob = new Blob([htmlStr], { type: 'application/vnd.ms-excel' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = 'quote_document.xls';
-            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-          };
-
           const generateCSVContent = () => { 
             const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
             let csvContent = "ファイル名,書類種別,発行日,宛先,発行元,工事名,現場住所,合計金額,品名,数量,単位,単価,金額\n";
@@ -1446,7 +1367,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.38</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.39</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -1488,10 +1409,11 @@
                 <div className="mb-6 bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-wrap justify-between items-center gap-4">
                   <div className="flex flex-wrap items-center gap-4">
                     <input type="file" multiple accept="image/*,application/pdf" onChange={handleImageUpload} ref={fileInputRef} className="hidden" />
-                    <button onClick={handleUploadBtnClick} disabled={loading || isUploading} className="flex items-center gap-2 px-4 py-2 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 font-medium text-gray-700 disabled:opacity-50">
+                    <button onClick={handleUploadBtnClick} disabled={loading || isUploading} className="flex items-center gap-2 px-4 py-2 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 font-medium text-gray-700 disabled:opacity-50" title="Ctrl+V (MacはCmd+V) で画像の直接貼り付けも可能です">
                       <FaIcon name={isUploading ? "spinner" : "upload"} size={16} className={isUploading ? "fa-spin" : ""} /> 
                       {isUploading ? '読み込み中...' : (imageFiles.length > 0 ? `${imageFiles.length}枚のファイルを読込済み` : '画像/PDFを選択(複数可)')}
                     </button>
+                    <span className="text-xs text-gray-400 hidden sm:inline-block font-medium">または Ctrl+V で画像貼付</span>
                     {/* ★ 新設: 白紙から作成ボタン */}
                     <button onClick={createBlankQuote} className="flex items-center gap-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-md hover:bg-indigo-100 font-bold shadow-sm transition-colors">
                       <FaIcon name="file-pen" size={16} />
