@@ -869,6 +869,121 @@
             return pages;
           };
 
+          const copyQuoteTSVToClipboard = () => {
+            const escapeTSV = (str) => String(str || '').replace(/\t/g, ' ').replace(/\n/g, ' ');
+            let tsvContent = `御見積書\n\n`;
+            tsvContent += `宛名\t${escapeTSV(quoteData.recipient)} ${escapeTSV(quoteData.honorific)}\n`;
+            tsvContent += `工事名\t${escapeTSV(quoteData.project_name)}\n`;
+            tsvContent += `現場住所\t${escapeTSV(quoteData.project_address)}\n`;
+            tsvContent += `発行日\t${escapeTSV(quoteData.date)}\n`;
+            tsvContent += `有効期限\t発行日より30日間\n\n`;
+            
+            tsvContent += `自社情報\n`;
+            tsvContent += `会社名\t${escapeTSV(myCompany.name)}\n`;
+            tsvContent += `郵便番号\t${escapeTSV(myCompany.zip)}\n`;
+            tsvContent += `住所\t${escapeTSV(myCompany.address)}\n`;
+            tsvContent += `電話番号\t${escapeTSV(myCompany.tel)}\n`;
+            tsvContent += `担当者\t${escapeTSV(myCompany.person)}\n\n`;
+
+            tsvContent += `御見積合計金額 (税込)\t${quoteGrandTotal}\n`;
+            tsvContent += `小計 (税抜)\t${quoteTotalAmount}\n`;
+            tsvContent += `消費税 (10%)\t${quoteTaxAmount}\n\n`;
+
+            tsvContent += "No.\t品名・仕様\t数量\t単位\t単価\t金額\n";
+            quoteData.items.forEach((item, index) => {
+              const name = escapeTSV(item.name); const unit = escapeTSV(item.unit);
+              const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
+              tsvContent += `${index + 1}\t${name}\t${qText}\t${unit}\t${item.unit_price || ''}\t${item.price || ''}\n`;
+            });
+            try {
+              const textArea = document.createElement("textarea"); textArea.value = tsvContent; document.body.appendChild(textArea); textArea.select(); document.execCommand("copy"); textArea.remove();
+              setToastMessage("見積書全体をTSV形式でコピーしました"); setTimeout(() => setToastMessage(null), 3000);
+            } catch (err) { setError("コピーに失敗しました。"); }
+          };
+
+          const exportQuoteExcel = () => {
+            alert("Excelファイルをダウンロードします。\n\n【印刷時のご注意】\n明細が多く複数ページにわたる場合は、ダウンロードしたExcelファイルを開き、『ページレイアウト』タブから『改ページの挿入』を行って区切り位置を調整してください。\nまたは、必要に応じて2ページ目以降の明細を別のシートへコピー＆ペーストして、印刷レイアウトを整えてください。");
+
+            let tableHtml = `
+              <table border="0" style="font-family: 'Meiryo', sans-serif; font-size: 11pt; width: 100%;">
+                <colgroup>
+                  <col style="width: 5%;" />
+                  <col style="width: 40%;" />
+                  <col style="width: 10%;" />
+                  <col style="width: 10%;" />
+                  <col style="width: 15%;" />
+                  <col style="width: 20%;" />
+                </colgroup>
+                <tr><td colspan="6" style="text-align: center; font-size: 18pt; font-weight: bold; border-bottom: 1px solid #000;">御見積書</td></tr>
+                <tr><td colspan="6"></td></tr>
+                <tr>
+                  <td colspan="3" style="font-size: 14pt; border-bottom: 1px solid #000;">${quoteData.recipient || '　　　　　　　'} ${quoteData.honorific || ''}</td>
+                  <td colspan="3" style="text-align: right;">発行日: ${quoteData.date || ''}</td>
+                </tr>
+                <tr>
+                  <td colspan="3">下記の通り御見積申し上げます。</td>
+                  <td colspan="3" style="text-align: right; font-weight: bold; font-size: 12pt;">${myCompany.name || ''}</td>
+                </tr>
+                <tr>
+                  <td colspan="3" style="font-size: 16pt; font-weight: bold; border-bottom: 3px double #000;">御見積金額：¥${quoteGrandTotal.toLocaleString()} -</td>
+                  <td colspan="3" style="text-align: right;">〒${myCompany.zip || ''}</td>
+                </tr>
+                <tr>
+                  <td colspan="3">工事名: ${quoteData.project_name || ''}</td>
+                  <td colspan="3" style="text-align: right;">${myCompany.address || ''}</td>
+                </tr>
+                <tr>
+                  <td colspan="3">現場住所: ${quoteData.project_address || ''}</td>
+                  <td colspan="3" style="text-align: right;">TEL: ${myCompany.tel || ''}</td>
+                </tr>
+                <tr>
+                  <td colspan="3" style="font-size: 10pt; color: #555;">見積有効期限: 発行日より30日間</td>
+                  <td colspan="3" style="text-align: right;">担当: ${myCompany.person || ''}</td>
+                </tr>
+                <tr><td colspan="6"></td></tr>
+                <tr>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">No.</th>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">品名・仕様</th>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">数量</th>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">単位</th>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">単価</th>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">金額</th>
+                </tr>
+            `;
+
+            quoteData.items.forEach((item, idx) => {
+              const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
+              tableHtml += `
+                <tr>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${idx + 1}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000;">${item.name || ''}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${qText}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${item.unit || ''}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.unit_price || ''}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.price || ''}</td>
+                </tr>
+              `;
+            });
+
+            tableHtml += `
+                <tr><td colspan="6" style="border-top: 1px solid #000;"></td></tr>
+                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">小計 (税抜)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTotalAmount.toLocaleString()}</td></tr>
+                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">消費税 (10%)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTaxAmount.toLocaleString()}</td></tr>
+                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">合計 (税込)</th><td style="border: 1px solid #000; text-align: right; font-weight: bold;">¥${quoteGrandTotal.toLocaleString()}</td></tr>
+              </table>
+            `;
+
+            const htmlStr = `
+            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+            <head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>御見積書</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head>
+            <body>${tableHtml}</body></html>`;
+
+            const blob = new Blob([htmlStr], { type: 'application/vnd.ms-excel' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = 'quote_document.xls';
+            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+          };
+
           const downloadQuotePDF = () => {
             if (typeof window.html2pdf === 'undefined') {
               setError("PDF生成ライブラリが読み込まれていません。画面を再読み込みしてください。");
