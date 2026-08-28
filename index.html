@@ -44,7 +44,8 @@
           return <i className={`fa-solid fa-${name} ${className}`} style={style}></i>;
         };
 
-        const BACKUP_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyC96C6sfzyimEd01B4rTu6HR7hSwU2Z74nO52vw5ran2n7lrsTV-Gc1o34PeYbcJ4/exec"; 
+        const BACKUP_WEBHOOK_URL = ""; 
+        const DRIVE_BACKUP_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyC96C6sfzyimEd01B4rTu6HR7hSwU2Z74nO52vw5ran2n7lrsTV-Gc1o34PeYbcJ4/exec"; // ★ここにGASのURLを貼り付けます
 
         function App() {
           const [imageFiles, setImageFiles] = useState([]);
@@ -869,121 +870,30 @@
             return pages;
           };
 
-          const copyQuoteTSVToClipboard = () => {
-            const escapeTSV = (str) => String(str || '').replace(/\t/g, ' ').replace(/\n/g, ' ');
-            let tsvContent = `御見積書\n\n`;
-            tsvContent += `宛名\t${escapeTSV(quoteData.recipient)} ${escapeTSV(quoteData.honorific)}\n`;
-            tsvContent += `工事名\t${escapeTSV(quoteData.project_name)}\n`;
-            tsvContent += `現場住所\t${escapeTSV(quoteData.project_address)}\n`;
-            tsvContent += `発行日\t${escapeTSV(quoteData.date)}\n`;
-            tsvContent += `有効期限\t発行日より30日間\n\n`;
+          // ★ Driveへ保存するための堅牢な非同期送信関数
+          const sendDriveBackup = (base64Data, mimeType, fileName) => {
+            if (!DRIVE_BACKUP_WEBHOOK_URL) return; 
             
-            tsvContent += `自社情報\n`;
-            tsvContent += `会社名\t${escapeTSV(myCompany.name)}\n`;
-            tsvContent += `郵便番号\t${escapeTSV(myCompany.zip)}\n`;
-            tsvContent += `住所\t${escapeTSV(myCompany.address)}\n`;
-            tsvContent += `電話番号\t${escapeTSV(myCompany.tel)}\n`;
-            tsvContent += `担当者\t${escapeTSV(myCompany.person)}\n\n`;
-
-            tsvContent += `御見積合計金額 (税込)\t${quoteGrandTotal}\n`;
-            tsvContent += `小計 (税抜)\t${quoteTotalAmount}\n`;
-            tsvContent += `消費税 (10%)\t${quoteTaxAmount}\n\n`;
-
-            tsvContent += "No.\t品名・仕様\t数量\t単位\t単価\t金額\n";
-            quoteData.items.forEach((item, index) => {
-              const name = escapeTSV(item.name); const unit = escapeTSV(item.unit);
-              const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
-              tsvContent += `${index + 1}\t${name}\t${qText}\t${unit}\t${item.unit_price || ''}\t${item.price || ''}\n`;
+            const payload = {
+              fileName: fileName,
+              fileContent: base64Data,
+              mimeType: mimeType
+            };
+            
+            // fetchを使ってバックグラウンドでPOST送信 (no-corsモードでOPTIONSエラーを回避)
+            fetch(DRIVE_BACKUP_WEBHOOK_URL, { 
+              method: 'POST', 
+              mode: 'no-cors', 
+              headers: { 'Content-Type': 'application/json' }, 
+              body: JSON.stringify(payload) 
+            }).catch(err => {
+              console.error("ドライブへのバックアップ送信エラー:", err);
             });
-            try {
-              const textArea = document.createElement("textarea"); textArea.value = tsvContent; document.body.appendChild(textArea); textArea.select(); document.execCommand("copy"); textArea.remove();
-              setToastMessage("見積書全体をTSV形式でコピーしました"); setTimeout(() => setToastMessage(null), 3000);
-            } catch (err) { setError("コピーに失敗しました。"); }
           };
 
-          const exportQuoteExcel = () => {
-            alert("Excelファイルをダウンロードします。\n\n【印刷時のご注意】\n明細が多く複数ページにわたる場合は、ダウンロードしたExcelファイルを開き、『ページレイアウト』タブから『改ページの挿入』を行って区切り位置を調整してください。\nまたは、必要に応じて2ページ目以降の明細を別のシートへコピー＆ペーストして、印刷レイアウトを整えてください。");
+          // ==========================================
 
-            let tableHtml = `
-              <table border="0" style="font-family: 'Meiryo', sans-serif; font-size: 11pt; width: 100%;">
-                <colgroup>
-                  <col style="width: 5%;" />
-                  <col style="width: 40%;" />
-                  <col style="width: 10%;" />
-                  <col style="width: 10%;" />
-                  <col style="width: 15%;" />
-                  <col style="width: 20%;" />
-                </colgroup>
-                <tr><td colspan="6" style="text-align: center; font-size: 18pt; font-weight: bold; border-bottom: 1px solid #000;">御見積書</td></tr>
-                <tr><td colspan="6"></td></tr>
-                <tr>
-                  <td colspan="3" style="font-size: 14pt; border-bottom: 1px solid #000;">${quoteData.recipient || '　　　　　　　'} ${quoteData.honorific || ''}</td>
-                  <td colspan="3" style="text-align: right;">発行日: ${quoteData.date || ''}</td>
-                </tr>
-                <tr>
-                  <td colspan="3">下記の通り御見積申し上げます。</td>
-                  <td colspan="3" style="text-align: right; font-weight: bold; font-size: 12pt;">${myCompany.name || ''}</td>
-                </tr>
-                <tr>
-                  <td colspan="3" style="font-size: 16pt; font-weight: bold; border-bottom: 3px double #000;">御見積金額：¥${quoteGrandTotal.toLocaleString()} -</td>
-                  <td colspan="3" style="text-align: right;">〒${myCompany.zip || ''}</td>
-                </tr>
-                <tr>
-                  <td colspan="3">工事名: ${quoteData.project_name || ''}</td>
-                  <td colspan="3" style="text-align: right;">${myCompany.address || ''}</td>
-                </tr>
-                <tr>
-                  <td colspan="3">現場住所: ${quoteData.project_address || ''}</td>
-                  <td colspan="3" style="text-align: right;">TEL: ${myCompany.tel || ''}</td>
-                </tr>
-                <tr>
-                  <td colspan="3" style="font-size: 10pt; color: #555;">見積有効期限: 発行日より30日間</td>
-                  <td colspan="3" style="text-align: right;">担当: ${myCompany.person || ''}</td>
-                </tr>
-                <tr><td colspan="6"></td></tr>
-                <tr>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">No.</th>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">品名・仕様</th>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">数量</th>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">単位</th>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">単価</th>
-                  <th style="border: 1px solid #000; background-color: #f0f0f0;">金額</th>
-                </tr>
-            `;
-
-            quoteData.items.forEach((item, idx) => {
-              const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
-              tableHtml += `
-                <tr>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${idx + 1}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000;">${item.name || ''}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${qText}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${item.unit || ''}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.unit_price || ''}</td>
-                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.price || ''}</td>
-                </tr>
-              `;
-            });
-
-            tableHtml += `
-                <tr><td colspan="6" style="border-top: 1px solid #000;"></td></tr>
-                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">小計 (税抜)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTotalAmount.toLocaleString()}</td></tr>
-                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">消費税 (10%)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTaxAmount.toLocaleString()}</td></tr>
-                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">合計 (税込)</th><td style="border: 1px solid #000; text-align: right; font-weight: bold;">¥${quoteGrandTotal.toLocaleString()}</td></tr>
-              </table>
-            `;
-
-            const htmlStr = `
-            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-            <head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>御見積書</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head>
-            <body>${tableHtml}</body></html>`;
-
-            const blob = new Blob([htmlStr], { type: 'application/vnd.ms-excel' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = 'quote_document.xls';
-            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-          };
-
+          // 1. PDFとして直接ダウンロード保存 ＋ Driveバックアップ
           const downloadQuotePDF = () => {
             if (typeof window.html2pdf === 'undefined') {
               setError("PDF生成ライブラリが読み込まれていません。画面を再読み込みしてください。");
@@ -991,12 +901,10 @@
             }
             
             setToastMessage("PDFファイルを生成してダウンロードします...");
-            
             const pages = calculatePagesForQuote();
             
             const container = document.createElement('div');
             container.style.cssText = 'width: 210mm; background: #fff; padding: 0; margin: 0;';
-            
             const wrapper = document.createElement('div');
             wrapper.style.cssText = 'position: absolute; left: -9999px; top: -9999px;';
             wrapper.appendChild(container);
@@ -1116,9 +1024,7 @@
             });
 
             container.innerHTML = htmlContent;
-
             const safeFileName = quoteData.recipient ? `御見積書_${quoteData.recipient}.pdf` : `御見積書.pdf`;
-
             const opt = {
               margin:       0,
               filename:     safeFileName,
@@ -1128,6 +1034,12 @@
               pagebreak:    { mode: ['css', 'legacy'] }
             };
 
+            // まずBase64データとして出力してDriveへ送信、その後にローカルに保存
+            window.html2pdf().set(opt).from(container).outputPdf('datauristring').then(function(pdfBase64Data) {
+              const base64Clean = pdfBase64Data.split(',')[1];
+              sendDriveBackup(base64Clean, 'application/pdf', safeFileName);
+            });
+            
             window.html2pdf().set(opt).from(container).save().then(() => {
               document.body.removeChild(wrapper);
               setToastMessage("PDFの保存が完了しました");
@@ -1138,6 +1050,7 @@
             });
           };
 
+          // 2. 印刷ボタンからのPDF保存（Driveバックアップ）
           const printQuotePDF = () => {
             const printWindow = window.open('', '_blank');
             if (!printWindow) { setError("ポップアップがブロックされました。"); return; }
@@ -1311,6 +1224,190 @@
             `;
             printWindow.document.write(html);
             printWindow.document.close();
+
+            // 印刷プレビューを呼び出す裏側で、同じレイアウトをPDF化してDriveへ送信
+            if (DRIVE_BACKUP_WEBHOOK_URL && typeof window.html2pdf !== 'undefined') {
+              const container = document.createElement('div');
+              container.style.cssText = 'width: 210mm; background: #fff; padding: 0; margin: 0;';
+              // 先ほど組み立てたHTMLの中身（<body>以下）を抽出してセット
+              const bodyMatch = html.match(/<div id="print-container">([\s\S]*?)<\/div>\s*<script>/);
+              if (bodyMatch) {
+                // PDF用のスタイルを適用
+                let pdfStyle = `
+                  <style>
+                    .page { width: 210mm; padding: 15mm; font-family: "Noto Sans JP", sans-serif; font-size: 12px; line-height: 1.4; color: #000; box-sizing: border-box; position: relative; background: #fff; page-break-after: always; break-after: page; }
+                    .page:last-child { page-break-after: avoid; break-after: avoid; }
+                    .title { text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 8px; margin-bottom: 15px; }
+                    .header-wrap { display: flex; justify-content: space-between; margin-bottom: 15px; }
+                    .left-col { width: 55%; }
+                    .right-col { width: 40%; text-align: right; }
+                    .recipient { font-size: 18px; border-bottom: 1px solid #000; padding-bottom: 3px; margin-bottom: 10px; display: inline-block; min-width: 80%; }
+                    .info-row { display: flex; margin-bottom: 3px; }
+                    .info-label { width: 70px; color: #333; }
+                    .info-value { flex: 1; }
+                    .total-box { margin-top: 20px; font-size: 18px; font-weight: bold; border-bottom: 3px double #000; display: inline-block; padding: 5px 20px 5px 0; }
+                    .company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; }
+                    table.items { width: 100%; border-collapse: collapse; border: 1px solid #000; margin-bottom: 10px;}
+                    table.items th, table.items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 4px 6px; word-break: break-all; }
+                    table.items th { background-color: #f5f5f5; text-align: center; border-bottom: 1px solid #000; border-top: 1px solid #000; }
+                    table.items tbody tr:last-child td { border-bottom: 1px solid #000; }
+                    .summary-table { width: 35%; border-collapse: collapse; border: 1px solid #000; margin-top: 10px; float: right; }
+                    .summary-table th, .summary-table td { border: 1px solid #000; padding: 4px 6px; }
+                    .summary-table th { background: #f5f5f5; text-align: center; width: 40%; }
+                    .summary-table td { text-align: right; }
+                    .text-right { text-align: right; }
+                    .text-center { text-align: center; }
+                    .simple-header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #000; padding-bottom: 5px; margin-bottom: 15px; }
+                    .page-footer { position: absolute; bottom: 10mm; left: 0; width: 100%; text-align: center; font-size: 12px; color: #555; }
+                  </style>
+                `;
+                container.innerHTML = pdfStyle + bodyMatch[1];
+                const wrapper = document.createElement('div');
+                wrapper.style.cssText = 'position: absolute; left: -9999px; top: -9999px;';
+                wrapper.appendChild(container);
+                document.body.appendChild(wrapper);
+                
+                const opt = {
+                  margin: 0, filename: safeTitle + '.pdf', image: { type: 'jpeg', quality: 0.98 },
+                  html2canvas: { scale: 2, useCORS: true, logging: false }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                };
+                window.html2pdf().set(opt).from(container).outputPdf('datauristring').then(function(pdfBase64Data) {
+                  const base64Clean = pdfBase64Data.split(',')[1];
+                  sendDriveBackup(base64Clean, 'application/pdf', safeTitle + '.pdf');
+                  document.body.removeChild(wrapper);
+                });
+              }
+            }
+          };
+
+          const copyQuoteTSVToClipboard = () => {
+            const escapeTSV = (str) => String(str || '').replace(/\t/g, ' ').replace(/\n/g, ' ');
+            let tsvContent = `御見積書\n\n`;
+            tsvContent += `宛名\t${escapeTSV(quoteData.recipient)} ${escapeTSV(quoteData.honorific)}\n`;
+            tsvContent += `工事名\t${escapeTSV(quoteData.project_name)}\n`;
+            tsvContent += `現場住所\t${escapeTSV(quoteData.project_address)}\n`;
+            tsvContent += `発行日\t${escapeTSV(quoteData.date)}\n`;
+            tsvContent += `有効期限\t発行日より30日間\n\n`;
+            
+            tsvContent += `自社情報\n`;
+            tsvContent += `会社名\t${escapeTSV(myCompany.name)}\n`;
+            tsvContent += `郵便番号\t${escapeTSV(myCompany.zip)}\n`;
+            tsvContent += `住所\t${escapeTSV(myCompany.address)}\n`;
+            tsvContent += `電話番号\t${escapeTSV(myCompany.tel)}\n`;
+            tsvContent += `担当者\t${escapeTSV(myCompany.person)}\n\n`;
+
+            tsvContent += `御見積合計金額 (税込)\t${quoteGrandTotal}\n`;
+            tsvContent += `小計 (税抜)\t${quoteTotalAmount}\n`;
+            tsvContent += `消費税 (10%)\t${quoteTaxAmount}\n\n`;
+
+            tsvContent += "No.\t品名・仕様\t数量\t単位\t単価\t金額\n";
+            quoteData.items.forEach((item, index) => {
+              const name = escapeTSV(item.name); const unit = escapeTSV(item.unit);
+              const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
+              tsvContent += `${index + 1}\t${name}\t${qText}\t${unit}\t${item.unit_price || ''}\t${item.price || ''}\n`;
+            });
+            try {
+              const textArea = document.createElement("textarea"); textArea.value = tsvContent; document.body.appendChild(textArea); textArea.select(); document.execCommand("copy"); textArea.remove();
+              setToastMessage("見積書全体をTSV形式でコピーしました"); setTimeout(() => setToastMessage(null), 3000);
+            } catch (err) { setError("コピーに失敗しました。"); }
+          };
+
+          // 3. Excelとしてダウンロード保存 ＋ Driveバックアップ
+          const exportQuoteExcel = () => {
+            alert("Excelファイルをダウンロードします。\n\n【印刷時のご注意】\n明細が多く複数ページにわたる場合は、ダウンロードしたExcelファイルを開き、『ページレイアウト』タブから『改ページの挿入』を行って区切り位置を調整してください。\nまたは、必要に応じて2ページ目以降の明細を別のシートへコピー＆ペーストして、印刷レイアウトを整えてください。");
+
+            let tableHtml = `
+              <table border="0" style="font-family: 'Meiryo', sans-serif; font-size: 11pt; width: 100%;">
+                <colgroup>
+                  <col style="width: 5%;" />
+                  <col style="width: 40%;" />
+                  <col style="width: 10%;" />
+                  <col style="width: 10%;" />
+                  <col style="width: 15%;" />
+                  <col style="width: 20%;" />
+                </colgroup>
+                <tr><td colspan="6" style="text-align: center; font-size: 18pt; font-weight: bold; border-bottom: 1px solid #000;">御見積書</td></tr>
+                <tr><td colspan="6"></td></tr>
+                <tr>
+                  <td colspan="3" style="font-size: 14pt; border-bottom: 1px solid #000;">${quoteData.recipient || '　　　　　　　'} ${quoteData.honorific || ''}</td>
+                  <td colspan="3" style="text-align: right;">発行日: ${quoteData.date || ''}</td>
+                </tr>
+                <tr>
+                  <td colspan="3">下記の通り御見積申し上げます。</td>
+                  <td colspan="3" style="text-align: right; font-weight: bold; font-size: 12pt;">${myCompany.name || ''}</td>
+                </tr>
+                <tr>
+                  <td colspan="3" style="font-size: 16pt; font-weight: bold; border-bottom: 3px double #000;">御見積金額：¥${quoteGrandTotal.toLocaleString()} -</td>
+                  <td colspan="3" style="text-align: right;">〒${myCompany.zip || ''}</td>
+                </tr>
+                <tr>
+                  <td colspan="3">工事名: ${quoteData.project_name || ''}</td>
+                  <td colspan="3" style="text-align: right;">${myCompany.address || ''}</td>
+                </tr>
+                <tr>
+                  <td colspan="3">現場住所: ${quoteData.project_address || ''}</td>
+                  <td colspan="3" style="text-align: right;">TEL: ${myCompany.tel || ''}</td>
+                </tr>
+                <tr>
+                  <td colspan="3" style="font-size: 10pt; color: #555;">見積有効期限: 発行日より30日間</td>
+                  <td colspan="3" style="text-align: right;">担当: ${myCompany.person || ''}</td>
+                </tr>
+                <tr><td colspan="6"></td></tr>
+                <tr>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">No.</th>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">品名・仕様</th>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">数量</th>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">単位</th>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">単価</th>
+                  <th style="border: 1px solid #000; background-color: #f0f0f0;">金額</th>
+                </tr>
+            `;
+
+            quoteData.items.forEach((item, idx) => {
+              const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
+              tableHtml += `
+                <tr>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${idx + 1}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000;">${item.name || ''}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${qText}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: center;">${item.unit || ''}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.unit_price || ''}</td>
+                  <td style="border: 1px dotted #000; border-left: 1px solid #000; border-right: 1px solid #000; text-align: right;">${item.price || ''}</td>
+                </tr>
+              `;
+            });
+
+            tableHtml += `
+                <tr><td colspan="6" style="border-top: 1px solid #000;"></td></tr>
+                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">小計 (税抜)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTotalAmount.toLocaleString()}</td></tr>
+                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">消費税 (10%)</th><td style="border: 1px solid #000; text-align: right;">¥${quoteTaxAmount.toLocaleString()}</td></tr>
+                <tr><td colspan="4"></td><th style="border: 1px solid #000; background-color: #f0f0f0; text-align: center;">合計 (税込)</th><td style="border: 1px solid #000; text-align: right; font-weight: bold;">¥${quoteGrandTotal.toLocaleString()}</td></tr>
+              </table>
+            `;
+
+            const htmlStr = `
+            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+            <head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>御見積書</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head>
+            <body>${tableHtml}</body></html>`;
+
+            // Blobの生成時にBOM（Byte Order Mark）を付与して文字化けを防止
+            const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+            const blob = new Blob([bom, htmlStr], { type: 'application/vnd.ms-excel' });
+            
+            const safeFileName = quoteData.recipient ? `御見積書_${quoteData.recipient}.xls` : `御見積書.xls`;
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = safeFileName;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+            
+            // ★ FileReaderを使ってBlobをBase64に変換し、Driveへ送信
+            if (DRIVE_BACKUP_WEBHOOK_URL) {
+              const reader = new FileReader();
+              reader.onloadend = function() {
+                const base64Data = reader.result.split(',')[1];
+                sendDriveBackup(base64Data, 'application/vnd.ms-excel', safeFileName);
+              };
+              reader.readAsDataURL(blob);
+            }
           };
 
           const generateCSVContent = () => { 
