@@ -252,7 +252,6 @@
             return newFiles;
           };
 
-          // 画像やPDFを一括処理する関数 (ペースト時にも共通利用)
           const processFiles = async (files) => {
             if (files.length === 0) return;
             
@@ -305,11 +304,9 @@
             await processFiles(files);
           };
 
-          // ペーストイベント監視用のRef
           const processFilesRef = useRef(processFiles);
           processFilesRef.current = processFiles;
 
-          // クリップボードからの画像貼り付けに対応
           useEffect(() => {
             const handlePaste = (e) => {
               const activeElement = document.activeElement;
@@ -431,7 +428,6 @@
             }
           };
 
-          // ★ 新設: 抽出データのテキストをスプレッドシートに保存（既存機能）
           const sendBackupToSpreadsheet = (fileName, parsedData) => {
             if (!BACKUP_WEBHOOK_URL) return; 
             try {
@@ -446,16 +442,14 @@
             } catch (err) { console.error("バックアップ送信エラー:", err); }
           };
 
-          // ★ 新設: ファイル実体（PDF/Excel）をGoogle Driveに自動バックアップする機能
           const sendDriveBackup = (fileName, base64Content, mimeType) => {
             if (!DRIVE_BACKUP_WEBHOOK_URL) return;
             try {
               const payload = {
                 fileName: fileName,
-                fileContent: base64Content.split(',')[1] || base64Content, // data:image... 等のプレフィックスを除去
+                fileContent: base64Content.split(',')[1] || base64Content, 
                 mimeType: mimeType
               };
-              // CORSエラーを回避するため mode: 'no-cors' を指定し、Content-Typeは 'text/plain' で送信
               fetch(DRIVE_BACKUP_WEBHOOK_URL, {
                 method: 'POST',
                 mode: 'no-cors',
@@ -771,7 +765,7 @@
               .calc-total-box { margin-top: 20px; font-size: 18px; font-weight: bold; border-bottom: 3px double #000; display: inline-block; padding: 5px 20px 5px 0; }
               .calc-company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; }
               table.calc-items { width: 100%; border-collapse: collapse; border: 1px solid #000; margin-bottom: 10px;}
-              table.calc-items th, table.calc-items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 4px 6px; word-break: break-all; }
+              table.calc-items th, table.calc-items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 3px 5px; word-break: break-all; }
               table.calc-items th { background-color: #f5f5f5; text-align: center; border-bottom: 1px solid #000; border-top: 1px solid #000; }
               .calc-summary-table { width: 35%; border-collapse: collapse; border: 1px solid #000; margin-top: 10px; float: right; }
               .calc-summary-table th, .calc-summary-table td { border: 1px solid #000; padding: 4px 6px; }
@@ -784,7 +778,8 @@
 
             const escapeHtml = (str) => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             
-            const PAGE_HEIGHT_LIMIT = 940; 
+            // ★ 高さを1000に引き上げ、1ページの余白を最大限利用するように調整
+            const PAGE_HEIGHT_LIMIT = 1000; 
             let pages = [];
             let pageCount = 0;
             
@@ -926,7 +921,7 @@
                 .total-box { margin-top: 20px; font-size: 18px; font-weight: bold; border-bottom: 3px double #000; display: inline-block; padding: 5px 20px 5px 0; }
                 .company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; }
                 table.items { width: 100%; border-collapse: collapse; border: 1px solid #000; margin-bottom: 10px;}
-                table.items th, table.items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 4px 6px; word-break: break-all; }
+                table.items th, table.items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 3px 5px; word-break: break-all; }
                 table.items th { background-color: #f5f5f5; text-align: center; border-bottom: 1px solid #000; border-top: 1px solid #000; }
                 table.items tbody tr:last-child td { border-bottom: 1px solid #000; }
                 .summary-table { width: 35%; border-collapse: collapse; border: 1px solid #000; margin-top: 10px; float: right; }
@@ -955,9 +950,9 @@
                       <div>下記の通り御見積申し上げます。</div>
                       <div class="total-box">御見積金額：¥${quoteGrandTotal.toLocaleString()} - (税込)</div>
                       <div style="margin-top: 10px;">
-                        <div class="calc-info-row"><div class="info-label">工事名：</div><div class="info-value">${escapeHtml(quoteData.project_name)}</div></div>
-                        <div class="calc-info-row"><div class="info-label">現場住所：</div><div class="info-value">${escapeHtml(quoteData.project_address)}</div></div>
-                        <div class="calc-info-row" style="margin-top: 6px;"><div class="info-label" style="font-size: 10px;">有効期限：</div><div class="info-value" style="font-size: 10px;">発行日より30日間</div></div>
+                        <div class="info-row"><div class="info-label">工事名：</div><div class="info-value">${escapeHtml(quoteData.project_name)}</div></div>
+                        <div class="info-row"><div class="info-label">現場住所：</div><div class="info-value">${escapeHtml(quoteData.project_address)}</div></div>
+                        <div class="info-row" style="margin-top: 6px;"><div class="info-label" style="font-size: 10px;">有効期限：</div><div class="info-value" style="font-size: 10px;">発行日より30日間</div></div>
                       </div>
                     </div>
                     <div class="right-col">
@@ -1037,7 +1032,6 @@
               pagebreak:    { mode: ['css', 'legacy'] }
             };
 
-            // ★ GASへの自動バックアップ送信 (PDF)
             if (DRIVE_BACKUP_WEBHOOK_URL) {
               window.html2pdf().set(opt).from(container).outputPdf('datauristring').then(pdfBase64 => {
                 sendDriveBackup(safeFileName, pdfBase64, 'application/pdf');
@@ -1113,7 +1107,7 @@
                   .company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; }
                   
                   table.items { width: 100%; border-collapse: collapse; border: 1px solid #000; margin-bottom: 10px;}
-                  table.items th, table.items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 4px 6px; word-break: break-all; }
+                  table.items th, table.items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 3px 5px; word-break: break-all; }
                   table.items th { background-color: #f5f5f5; text-align: center; border-bottom: 1px solid #000; border-top: 1px solid #000; }
                   table.items tbody tr:last-child td { border-bottom: 1px solid #000; }
                   
@@ -1186,12 +1180,11 @@
               `;
 
               page.items.forEach((item) => {
-                const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
                 html += `
                   <tr>
                     <td class="text-center">${item.originalIndex + 1}</td>
                     <td>${escapeHtml(item.name)}</td>
-                    <td class="text-right">${qText}</td>
+                    <td class="text-right">${item.quantity || ''}</td>
                     <td class="text-center">${escapeHtml(item.unit)}</td>
                     <td class="text-right">${item.unit_price ? '¥' + item.unit_price.toLocaleString() : ''}</td>
                     <td class="text-right">${item.price ? '¥' + item.price.toLocaleString() : ''}</td>
@@ -1228,7 +1221,6 @@
             printWindow.document.write(html);
             printWindow.document.close();
 
-            // ★ 印刷実行時も、裏側でPDFを生成してDriveへ自動バックアップ送信
             if (DRIVE_BACKUP_WEBHOOK_URL && typeof window.html2pdf !== 'undefined') {
               const container = document.createElement('div');
               container.style.cssText = 'width: 210mm; background: #fff; padding: 0; margin: 0;';
@@ -1248,7 +1240,7 @@
                   .total-box { margin-top: 20px; font-size: 18px; font-weight: bold; border-bottom: 3px double #000; display: inline-block; padding: 5px 20px 5px 0; }
                   .company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; }
                   table.items { width: 100%; border-collapse: collapse; border: 1px solid #000; margin-bottom: 10px;}
-                  table.items th, table.items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 4px 6px; word-break: break-all; }
+                  table.items th, table.items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 3px 5px; word-break: break-all; }
                   table.items th { background-color: #f5f5f5; text-align: center; border-bottom: 1px solid #000; border-top: 1px solid #000; }
                   table.items tbody tr:last-child td { border-bottom: 1px solid #000; }
                   .summary-table { width: 35%; border-collapse: collapse; border: 1px solid #000; margin-top: 10px; float: right; }
@@ -1475,7 +1467,6 @@
             const blob = new Blob([htmlStr], { type: 'application/vnd.ms-excel' });
             const safeFileName = quoteData.recipient ? `御見積書_${quoteData.recipient}.xls` : `御見積書.xls`;
 
-            // ★ GASへの自動バックアップ送信 (Excel)
             if (DRIVE_BACKUP_WEBHOOK_URL) {
               const reader = new FileReader();
               reader.onloadend = () => {
@@ -1658,7 +1649,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.41</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.42</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -1705,7 +1696,6 @@
                       {isUploading ? '読み込み中...' : (imageFiles.length > 0 ? `${imageFiles.length}枚のファイルを読込済み` : '画像/PDFを選択(複数可)')}
                     </button>
                     <span className="text-xs text-gray-400 hidden sm:inline-block font-medium">または Ctrl+V で画像貼付</span>
-                    {/* ★ 新設: 白紙から作成ボタン */}
                     <button onClick={createBlankQuote} className="flex items-center gap-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-md hover:bg-indigo-100 font-bold shadow-sm transition-colors">
                       <FaIcon name="file-pen" size={16} />
                       白紙から見積書を作成
