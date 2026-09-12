@@ -45,7 +45,7 @@
         };
 
         const BACKUP_WEBHOOK_URL = ""; 
-        const DRIVE_BACKUP_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyC96C6sfzyimEd01B4rTu6HR7hSwU2Z74nO52vw5ran2n7lrsTV-Gc1o34PeYbcJ4/exec"; // ★ここにGASのWebhook URLを貼り付けます
+        const DRIVE_BACKUP_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyC96C6sfzyimEd01B4rTu6HR7hSwU2Z74nO52vw5ran2n7lrsTV-Gc1o34PeYbcJ4/exec"; // ★ここにGASのURLを貼り付けます
 
         function App() {
           const [imageFiles, setImageFiles] = useState([]);
@@ -99,7 +99,7 @@
           });
 
           // ==========================================
-          // OCR・タブ関連のステート群 (v1.45 新設)
+          // OCR・タブ関連のステート群
           // ==========================================
           const [activeTab, setActiveTab] = useState('quote'); 
           const [ocrMode, setOcrMode] = useState('standard');
@@ -547,6 +547,17 @@
               });
               sendBackupToSpreadsheet(imageFiles[currentFileIndex].name, parsedData);
             } catch(err) { setError(`解析エラー: ${err.message}`); } finally { setLoading(false); }
+          };
+
+          // ★ステップバーからの呼び出し用
+          const handleExtractQuote = () => {
+            setActiveTab('quote');
+            analyzeCurrentImage();
+          };
+
+          const handleExtractText = () => {
+            setActiveTab('text');
+            executeTextOcr();
           };
 
           const openPageSelectModal = () => {
@@ -1215,7 +1226,7 @@
                       <div class="total-box">御見積金額：¥${quoteGrandTotal.toLocaleString()} - (税込)</div>
                       <div style="margin-top: 10px;">
                         <div class="info-row"><div class="info-label">工事名：</div><div class="info-value">${escapeHtml(quoteData.project_name)}</div></div>
-                        <div class="info-row"><div class="info-label">現場住所：</div><div class="info-value">${escapeHtml(quoteData.project_address)}</div></div>
+                        <div class="info-row"><div class="info-label">现场住所：</div><div class="info-value">${escapeHtml(quoteData.project_address)}</div></div>
                         <div class="info-row" style="margin-top: 6px;"><div class="info-label" style="font-size: 10px;">有効期限：</div><div class="info-value" style="font-size: 10px;">発行日より30日間</div></div>
                       </div>
                     </div>
@@ -1650,7 +1661,6 @@
 
             return (
               <div className="flex flex-col h-full">
-                {/* ★ タブ切り替えヘッダー */}
                 <div className={`flex border-b ${isOverlay ? 'border-gray-400/30 bg-white/20' : 'border-gray-200 bg-gray-50'}`}>
                   <button onClick={() => setActiveTab('quote')} className={`flex-1 py-2 text-sm font-bold transition-colors ${activeTab === 'quote' ? (isOverlay ? 'text-blue-800 border-b-2 border-blue-800 bg-white/40' : 'text-blue-600 border-b-2 border-blue-600 bg-white') : 'text-gray-500 hover:text-gray-700 hover:bg-white/30'}`}>見積・表データ</button>
                   <button onClick={() => setActiveTab('text')} className={`flex-1 py-2 text-sm font-bold transition-colors ${activeTab === 'text' ? (isOverlay ? 'text-emerald-800 border-b-2 border-emerald-800 bg-white/40' : 'text-emerald-600 border-b-2 border-emerald-600 bg-white') : 'text-gray-500 hover:text-gray-700 hover:bg-white/30'}`}>テキスト抽出 (OCR)</button>
@@ -1714,7 +1724,7 @@
                     </div>
                   )}
 
-                  {/* ▼ タブ2: 新設テキスト抽出OCR UI ▼ */}
+                  {/* ▼ タブ2: テキスト抽出OCR UI ▼ */}
                   {activeTab === 'text' && (
                     <div className="flex flex-col h-full space-y-4 animate-fade-in">
                       <div className={`p-3 rounded-lg border ${isOverlay ? 'bg-white/50 border-gray-400/30 shadow-sm' : 'bg-gray-50 border-gray-200'}`}>
@@ -1728,9 +1738,10 @@
                             </select>
                           </div>
                           <div className="flex-none flex items-end">
-                            <button onClick={executeTextOcr} disabled={isOcrLoading || !imageSrc} className="px-4 py-1.5 bg-emerald-600 text-white rounded font-bold hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2 transition-colors shadow-sm">
-                              <FaIcon name={isOcrLoading ? "spinner" : "wand-magic-sparkles"} className={isOcrLoading ? "fa-spin" : ""} />
-                              抽出実行
+                            {/* ▼ 再抽出ボタン (初回はグレーアウト) ▼ */}
+                            <button onClick={executeTextOcr} disabled={isOcrLoading || !imageSrc || !extractedData.ocr_text} className="px-4 py-1.5 bg-emerald-600 text-white rounded font-bold hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2 transition-colors shadow-sm">
+                              <FaIcon name={isOcrLoading ? "spinner" : "rotate-right"} className={isOcrLoading ? "fa-spin" : ""} />
+                              再抽出
                             </button>
                           </div>
                         </div>
@@ -1780,23 +1791,85 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.45</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.47</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
                     <div className="flex bg-gray-200 p-1 rounded-lg">
-                      <button onClick={() => setViewMode('split')} className={`px-3 py-1.5 rounded-md flex items-center gap-2 text-sm font-medium transition-all ${viewMode === 'split' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}><FaIcon name="table-columns" size={16} /> 分割</button>
-                      <button onClick={() => setViewMode('overlay')} className={`px-3 py-1.5 rounded-md flex items-center gap-2 text-sm font-medium transition-all ${viewMode === 'overlay' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}><FaIcon name="layer-group" size={16} /> 透過</button>
+                      <button onClick={() => setViewMode('split')} className={`px-3 py-1.5 rounded-md flex items-center gap-2 text-sm font-medium transition-all ${viewMode === 'split' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}><FaIcon name="table-columns" size={16} /> 分割表示</button>
+                      <button onClick={() => setViewMode('overlay')} className={`px-3 py-1.5 rounded-md flex items-center gap-2 text-sm font-medium transition-all ${viewMode === 'overlay' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}><FaIcon name="layer-group" size={16} /> 透過表示</button>
                     </div>
                     <div className="h-6 w-px bg-gray-300"></div>
                     <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors text-gray-700"><FaIcon name="gear" size={16} /> API設定</button>
+                  </div>
+                </header>
+
+                {error && <div className="mb-4 p-3 bg-red-50 border-l-4 border-red-500 text-red-700 flex items-center gap-3 rounded text-sm"><FaIcon name="circle-exclamation" size={18} /> <p>{error}</p></div>}
+
+                {/* ★中段ステップバーUI */}
+                <div className="mb-6 bg-white p-3 rounded-xl shadow-sm border border-gray-200 overflow-visible">
+                  <div className="flex flex-wrap items-center gap-2">
                     
-                    <div className="relative" ref={exportMenuRef}>
-                      <button onClick={() => setIsExportMenuOpen(!isExportMenuOpen)} disabled={imageFiles.length === 0} className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-bold shadow-sm transition-colors">
-                        <FaIcon name="download" size={16} /> 保存・出力 <FaIcon name="chevron-down" size={12} className={`transition-transform duration-200 ${isExportMenuOpen ? 'rotate-180' : ''}`} />
+                    {/* Step 1 */}
+                    <div className="flex items-center gap-2 bg-gray-50 p-1.5 rounded-lg border border-gray-100">
+                      <span className="text-[10px] font-bold text-gray-400 px-1">1.読込</span>
+                      <input type="file" multiple accept="image/*,application/pdf" onChange={handleImageUpload} ref={fileInputRef} className="hidden" />
+                      <button onClick={handleUploadBtnClick} disabled={loading || isUploading} className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50 font-medium text-gray-700 text-sm disabled:opacity-50">
+                        <FaIcon name={isUploading ? "spinner" : "upload"} size={14} className={isUploading ? "fa-spin" : ""} /> 
+                        {isUploading ? '読み込み中...' : (imageFiles.length > 0 ? `${imageFiles.length}枚のファイルを読込済み` : 'ファイル読込or画像ペースト')}
                       </button>
+                      
+                      <button onClick={createBlankQuote} className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded hover:bg-indigo-100 font-bold text-sm transition-colors">
+                        <FaIcon name="file-pen" size={14} />
+                        白紙から作成
+                      </button>
+
+                      {imageFiles.length > 0 && (
+                        <div className="flex items-center gap-2 bg-white border border-gray-200 p-1 rounded ml-1">
+                          <button disabled={currentFileIndex === 0 || isAnalyzingAll} onClick={() => setCurrentFileIndex(i => i - 1)} className="p-1 text-gray-500 hover:bg-gray-100 rounded disabled:opacity-30"><FaIcon name="chevron-left" size={12} /></button>
+                          <div className="text-xs font-medium w-24 text-center flex flex-col items-center leading-tight">
+                            <span className="text-gray-700">{currentFileIndex + 1} / {imageFiles.length}</span>
+                            <span className="text-[10px] text-gray-400 truncate w-full" title={imageFiles[currentFileIndex].name}>{imageFiles[currentFileIndex].name}</span>
+                          </div>
+                          <button disabled={currentFileIndex === imageFiles.length - 1 || isAnalyzingAll} onClick={() => setCurrentFileIndex(i => i + 1)} className="p-1 text-gray-500 hover:bg-gray-100 rounded disabled:opacity-30"><FaIcon name="chevron-right" size={12} /></button>
+                        </div>
+                      )}
+                    </div>
+
+                    <FaIcon name="chevron-right" className="text-gray-300" size={12} />
+
+                    {/* Step 2 */}
+                    <div className="flex items-center gap-2 bg-blue-50/50 p-1.5 rounded-lg border border-blue-100/50">
+                      <span className="text-[10px] font-bold text-blue-400 px-1">2.抽出</span>
+                      <button onClick={handleExtractQuote} disabled={!imageSrc || loading || isOcrLoading || isAnalyzingAll || !userApiKey} className="flex items-center gap-2 px-3 py-1.5 bg-white border border-blue-600 text-blue-600 rounded hover:bg-blue-50 disabled:opacity-50 font-bold text-sm">
+                        <FaIcon name={loading && !isAnalyzingAll ? "spinner" : "file-invoice"} size={14} className={loading && !isAnalyzingAll ? "fa-spin" : ""} />
+                        見積を抽出
+                      </button>
+                      
+                      <button onClick={handleExtractText} disabled={!imageSrc || loading || isOcrLoading || isAnalyzingAll || !userApiKey} className="flex items-center gap-2 px-3 py-1.5 bg-white border border-emerald-600 text-emerald-600 rounded hover:bg-emerald-50 disabled:opacity-50 font-bold text-sm">
+                        <FaIcon name={isOcrLoading ? "spinner" : "file-lines"} size={14} className={isOcrLoading ? "fa-spin" : ""} />
+                        テキスト抽出
+                      </button>
+
+                      {imageFiles.length > 1 && (
+                        <button onClick={() => isAnalyzingAll ? null : openPageSelectModal()} disabled={!imageSrc || loading || isOcrLoading || !userApiKey} className="flex items-center gap-2 px-3 py-1.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 disabled:opacity-50 font-bold text-sm ml-1">
+                          <FaIcon name={isAnalyzingAll ? "spinner" : "list-check"} size={14} className={isAnalyzingAll ? "fa-spin" : ""} />
+                          {isAnalyzingAll ? `一括処理中(${analyzingIndex + 1}/${imageFiles.length})` : '選択して一括'}
+                        </button>
+                      )}
+                    </div>
+
+                    <FaIcon name="chevron-right" className="text-gray-300" size={12} />
+
+                    {/* Step 3 */}
+                    <div className="flex items-center gap-2 bg-indigo-50/50 p-1.5 rounded-lg border border-indigo-100/50 relative" ref={exportMenuRef}>
+                      <span className="text-[10px] font-bold text-indigo-400 px-1">3.完了</span>
+                      <button onClick={() => setIsExportMenuOpen(!isExportMenuOpen)} disabled={imageFiles.length === 0} className="flex items-center gap-2 px-4 py-1.5 text-sm bg-indigo-600 text-white rounded font-bold hover:bg-indigo-700 disabled:opacity-50 shadow-sm transition-colors">
+                        <FaIcon name="download" size={14} /> 保存・出力 <FaIcon name="chevron-down" size={12} className={`transition-transform duration-200 ${isExportMenuOpen ? 'rotate-180' : ''}`} />
+                      </button>
+                      
                       {isExportMenuOpen && (
-                        <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden z-50">
+                        <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden z-[100]">
                           <div className="py-1">
                             <button onClick={() => { openQuoteEditor(); setIsExportMenuOpen(false); }} disabled={!hasAnalyzedData} className="w-full text-left px-4 py-3 text-sm text-indigo-700 hover:bg-indigo-50 flex items-center gap-3 transition-colors border-b-2 border-indigo-100 disabled:opacity-50">
                               <FaIcon name="file-invoice" className="text-indigo-600 w-5 text-center" size={18} />
@@ -1815,35 +1888,6 @@
                       )}
                     </div>
                   </div>
-                </header>
-
-                {error && <div className="mb-4 p-3 bg-red-50 border-l-4 border-red-500 text-red-700 flex items-center gap-3 rounded text-sm"><FaIcon name="circle-exclamation" size={18} /> <p>{error}</p></div>}
-
-                <div className="mb-6 bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-wrap justify-between items-center gap-4">
-                  <div className="flex flex-wrap items-center gap-4">
-                    <input type="file" multiple accept="image/*,application/pdf" onChange={handleImageUpload} ref={fileInputRef} className="hidden" />
-                    <button onClick={handleUploadBtnClick} disabled={loading || isUploading} className="flex items-center gap-2 px-4 py-2 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 font-medium text-gray-700 disabled:opacity-50" title="Ctrl+V (MacはCmd+V) で画像の直接貼り付けも可能です">
-                      <FaIcon name={isUploading ? "spinner" : "upload"} size={16} className={isUploading ? "fa-spin" : ""} /> 
-                      {isUploading ? '読み込み中...' : (imageFiles.length > 0 ? `${imageFiles.length}枚のファイルを読込済み` : '画像/PDFを選択(複数可)')}
-                    </button>
-                    <span className="text-xs text-gray-400 hidden sm:inline-block font-medium">または Ctrl+V で画像貼付</span>
-                    <button onClick={createBlankQuote} className="flex items-center gap-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-md hover:bg-indigo-100 font-bold shadow-sm transition-colors">
-                      <FaIcon name="file-pen" size={16} />
-                      白紙から見積書を作成
-                    </button>
-                    {imageFiles.length > 0 && (
-                      <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 p-1.5 rounded-lg ml-2">
-                        <button disabled={currentFileIndex === 0 || isAnalyzingAll} onClick={() => setCurrentFileIndex(i => i - 1)} className="p-1.5 text-gray-500 hover:bg-gray-200 rounded disabled:opacity-30"><FaIcon name="chevron-left" /></button>
-                        <div className="text-sm font-medium w-32 text-center flex flex-col items-center"><span className="text-gray-700">{currentFileIndex + 1} / {imageFiles.length}</span><span className="text-xs text-gray-400 truncate w-full" title={imageFiles[currentFileIndex].name}>{imageFiles[currentFileIndex].name}</span></div>
-                        <button disabled={currentFileIndex === imageFiles.length - 1 || isAnalyzingAll} onClick={() => setCurrentFileIndex(i => i + 1)} className="p-1.5 text-gray-500 hover:bg-gray-200 rounded disabled:opacity-30"><FaIcon name="chevron-right" /></button>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex gap-2">
-                    <button onClick={analyzeCurrentImage} disabled={!imageSrc || loading || isAnalyzingAll || !userApiKey} className="flex items-center gap-2 px-4 py-2 bg-white border border-blue-600 text-blue-600 rounded-md hover:bg-blue-50 disabled:opacity-50 font-bold"><FaIcon name={loading && !isAnalyzingAll ? "spinner" : "play"} size={16} className={loading && !isAnalyzingAll ? "fa-spin" : ""} />表示中を処理</button>
-                    {imageFiles.length > 1 && <button onClick={() => isAnalyzingAll ? null : openPageSelectModal()} disabled={!imageSrc || loading || !userApiKey} className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 disabled:opacity-50 font-bold"><FaIcon name={isAnalyzingAll ? "spinner" : "list-check"} size={16} className={isAnalyzingAll ? "fa-spin" : ""} />{isAnalyzingAll ? `一括処理中(${analyzingIndex + 1}/${imageFiles.length})` : '選択して一括'}</button>}
-                  </div>
                 </div>
 
                 {/* メインビューエリア */}
@@ -1854,7 +1898,6 @@
                       <div className="flex-grow p-4 overflow-auto bg-gray-100 flex justify-center">{imageSrc ? <img src={imageSrc} className="max-w-full h-auto object-contain" /> : <p className="text-gray-400 mt-10">ファイルがありません</p>}</div>
                     </div>
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col overflow-hidden">
-                      <div className="p-3 border-b border-gray-200 bg-gray-50 font-semibold text-gray-700 flex items-center gap-2"><FaIcon name="file-excel" size={16} /> 抽出データ</div>
                       {renderFormContent(false)}
                     </div>
                   </div>
