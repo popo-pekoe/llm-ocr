@@ -59,6 +59,10 @@
           const [analyzingIndex, setAnalyzingIndex] = useState(-1);
           const [error, setError] = useState(null);
           const [toastMessage, setToastMessage] = useState(null);
+
+          const [isTextOcrModalOpen, setIsTextOcrModalOpen] = useState(false);
+          const [ocrText, setOcrText] = useState("");
+          const [isOcrLoading, setIsOcrLoading] = useState(false);
           
           const [thumbnails, setThumbnails] = useState([]);
           const [isPageSelectModalOpen, setIsPageSelectModalOpen] = useState(false);
@@ -462,6 +466,66 @@
               console.error("Drive Backup 準備エラー:", err);
             }
           };
+
+            // ★ 新設: テキストのみを抽出するOCR機能
+          const extractTextFromImage = async () => {
+            if (!userApiKey) return setShowSettings(true);
+            if (!imageSrc) return;
+            
+            setIsOcrLoading(true);
+            setOcrText("");
+            setIsTextOcrModalOpen(true); 
+            
+            try {
+              const base64Data = imageSrc.split(',')[1];
+              const mimeType = imageFiles[currentFileIndex].type;
+              
+              const payload = {
+                contents: [{
+                  role: "user",
+                  parts: [
+                    { text: "この画像のテキストを読み取って文字起こししてください。段落や改行などはできるだけ元の見た目に合わせてください。もし表や入力欄（名前や住所など）がある場合は、「項目名：内容」というような分かりやすいテキスト形式に変換してください。余計な挨拶や説明は一切不要です。抽出したテキストのみを出力してください。" },
+                    { inlineData: { mimeType: mimeType, data: base64Data } }
+                  ]
+                }]
+              };
+
+              const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${userApiKey}`;
+              
+              const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+              if (!response.ok) throw new Error(`APIエラー: ${response.status}`);
+              const data = await response.json();
+              const textResult = data.candidates?.[0]?.content?.parts?.[0]?.text;
+              
+              if (textResult) {
+                setOcrText(textResult);
+              } else {
+                throw new Error("テキストの抽出に失敗しました。");
+              }
+            } catch(err) {
+              setOcrText(`エラーが発生しました: ${err.message}`);
+            } finally {
+              setIsOcrLoading(false);
+            }
+          };
+
+          const copyOcrText = () => {
+            try {
+              const textArea = document.createElement("textarea"); 
+              textArea.value = ocrText; 
+              document.body.appendChild(textArea); 
+              textArea.select(); 
+              document.execCommand("copy"); 
+              textArea.remove();
+              setToastMessage("テキストをコピーしました"); 
+              setTimeout(() => setToastMessage(null), 3000);
+            } catch (err) { 
+              setError("コピーに失敗しました。"); 
+            }
+          };
+
+
+
 
           const analyzeCurrentImage = async () => {
             if (!userApiKey) return setShowSettings(true);
@@ -1653,7 +1717,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.43</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.44</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -1714,6 +1778,11 @@
                   </div>
 
                   <div className="flex gap-2">
+                    {/* ★追加: テキスト抽出ボタン（divの中、表示中を処理ボタンの前に並べます） */}
+                    <button onClick={extractTextFromImage} disabled={!imageSrc || loading || isAnalyzingAll || !userApiKey || isOcrLoading} className="flex items-center gap-2 px-4 py-2 bg-white border border-emerald-600 text-emerald-600 rounded-md hover:bg-emerald-50 disabled:opacity-50 font-bold">
+                      <FaIcon name={isOcrLoading ? "spinner" : "file-lines"} size={16} className={isOcrLoading ? "fa-spin" : ""} />
+                      テキスト抽出
+                    </button>
                     <button onClick={analyzeCurrentImage} disabled={!imageSrc || loading || isAnalyzingAll || !userApiKey} className="flex items-center gap-2 px-4 py-2 bg-white border border-blue-600 text-blue-600 rounded-md hover:bg-blue-50 disabled:opacity-50 font-bold"><FaIcon name={loading && !isAnalyzingAll ? "spinner" : "play"} size={16} className={loading && !isAnalyzingAll ? "fa-spin" : ""} />表示中を処理</button>
                     {imageFiles.length > 1 && <button onClick={() => isAnalyzingAll ? null : openPageSelectModal()} disabled={!imageSrc || loading || !userApiKey} className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 disabled:opacity-50 font-bold"><FaIcon name={isAnalyzingAll ? "spinner" : "list-check"} size={16} className={isAnalyzingAll ? "fa-spin" : ""} />{isAnalyzingAll ? `一括処理中(${analyzingIndex + 1}/${imageFiles.length})` : '選択して一括'}</button>}
                   </div>
@@ -1966,6 +2035,40 @@
                   </div>
                 </div>
               )}
+
+
+              {/* ★ 新設: テキスト抽出結果モーダル */}
+              {isTextOcrModalOpen && (
+                <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4 animate-fade-in">
+                  <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl flex flex-col overflow-hidden" style={{ height: '80vh' }}>
+                    <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                      <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2"><FaIcon name="file-lines" className="text-emerald-600" /> テキスト抽出結果</h2>
+                      <button onClick={() => setIsTextOcrModalOpen(false)} className="text-gray-500 hover:text-gray-700"><FaIcon name="xmark" size={20} /></button>
+                    </div>
+                    <div className="flex-grow p-4 bg-gray-100 overflow-hidden flex flex-col">
+                      {isOcrLoading ? (
+                        <div className="flex-grow flex flex-col items-center justify-center text-gray-500 gap-3">
+                          <FaIcon name="spinner" className="fa-spin text-emerald-500" size={32} />
+                          <p className="font-bold">画像を解析し、テキストを文字起こししています...</p>
+                        </div>
+                      ) : (
+                        <textarea 
+                          value={ocrText}
+                          onChange={(e) => setOcrText(e.target.value)}
+                          className="w-full h-full flex-grow p-5 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 resize-none font-sans text-sm leading-relaxed"
+                        />
+                      )}
+                    </div>
+                    <div className="p-4 border-t border-gray-200 flex justify-end gap-3 bg-white">
+                      <button onClick={() => setIsTextOcrModalOpen(false)} className="px-5 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">閉じる</button>
+                      <button onClick={copyOcrText} disabled={isOcrLoading || !ocrText} className="flex items-center gap-2 px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 font-bold shadow-sm">
+                        <FaIcon name="copy" /> コピーする
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
 
               {showSettings && (
                 <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
