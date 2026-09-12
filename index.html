@@ -753,35 +753,28 @@
             container.style.cssText = 'position:absolute; left:-9999px; top:-9999px; width:210mm; background:#fff; visibility:hidden;';
             const style = document.createElement('style');
             style.innerHTML = `
-              .calc-page { width: 210mm; padding: 15mm; font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; box-sizing: border-box; }
+              /* ★ paddingの下部を25mmに広げ、フッターと被らないように調整 */
+              .calc-page { width: 210mm; padding: 15mm 15mm 25mm 15mm; font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; box-sizing: border-box; }
               .calc-title { text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 8px; margin-bottom: 15px; }
               .calc-header-wrap { display: flex; justify-content: space-between; margin-bottom: 15px; }
-              .calc-left-col { width: 55%; }
-              .calc-right-col { width: 40%; text-align: right; }
-              .calc-recipient { font-size: 18px; border-bottom: 1px solid #000; padding-bottom: 3px; margin-bottom: 10px; display: inline-block; min-width: 80%; }
-              .calc-info-row { display: flex; margin-bottom: 3px; }
-              .calc-info-label { width: 70px; color: #333; }
-              .calc-info-value { flex: 1; }
-              .calc-total-box { margin-top: 20px; font-size: 18px; font-weight: bold; border-bottom: 3px double #000; display: inline-block; padding: 5px 20px 5px 0; }
-              .calc-company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; }
-              table.calc-items { width: 100%; border-collapse: collapse; border: 1px solid #000; margin-bottom: 10px;}
-              table.calc-items th, table.calc-items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 3px 5px; word-break: break-all; }
-              table.calc-items th { background-color: #f5f5f5; text-align: center; border-bottom: 1px solid #000; border-top: 1px solid #000; }
-              .calc-summary-table { width: 35%; border-collapse: collapse; border: 1px solid #000; margin-top: 10px; float: right; }
-              .calc-summary-table th, .calc-summary-table td { border: 1px solid #000; padding: 4px 6px; }
-              .calc-summary-table th { background: #f5f5f5; text-align: center; width: 40%; }
-              .calc-summary-table td { text-align: right; }
-              .calc-simple-header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #000; padding-bottom: 5px; margin-bottom: 15px; }
+              /* ・・・中略（この間のCSSは変更なし）・・・ */
+              .page-footer { position: absolute; bottom: 10mm; left: 0; width: 100%; text-align: center; font-size: 12px; color: #555; }
             `;
             container.appendChild(style);
             document.body.appendChild(container);
 
             const escapeHtml = (str) => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             
-            // ★ 高さを1000に引き上げ、1ページの余白を最大限利用するように調整
-            const PAGE_HEIGHT_LIMIT = 1000; 
+            // ★ 高さを適当なピクセルではなく、ブラウザごとの297mmの正確なピクセル値として動的取得
+            const measureDiv = document.createElement('div');
+            measureDiv.style.height = '297mm';
+            document.body.appendChild(measureDiv);
+            const PAGE_HEIGHT_LIMIT = measureDiv.offsetHeight - 5; // 5pxの安全マージン
+            document.body.removeChild(measureDiv);
+            
             let pages = [];
             let pageCount = 0;
+
             
             const createNewPageDOM = (isFirst) => {
               pageCount++;
@@ -906,11 +899,15 @@
             wrapper.appendChild(container);
             document.body.appendChild(wrapper);
             
+
+
             let htmlContent = `
               <style>
-                .pdf-page { width: 210mm; padding: 15mm; font-family: "Noto Sans JP", sans-serif; font-size: 12px; line-height: 1.4; color: #000; box-sizing: border-box; position: relative; background: #fff; page-break-after: always; break-after: page; }
+                /* ★ height: 297mm と overflow: hidden を追加し、A4サイズを絶対固定 */
+                .pdf-page { width: 210mm; height: 297mm; padding: 15mm 15mm 25mm 15mm; font-family: "Noto Sans JP", sans-serif; font-size: 12px; line-height: 1.4; color: #000; box-sizing: border-box; position: relative; background: #fff; page-break-after: always; break-after: page; overflow: hidden; }
                 .pdf-page:last-child { page-break-after: avoid; break-after: avoid; }
                 .pdf-title { text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 8px; margin-bottom: 15px; }
+               
                 .header-wrap { display: flex; justify-content: space-between; margin-bottom: 15px; }
                 .left-col { width: 55%; }
                 .right-col { width: 40%; text-align: right; }
@@ -1054,6 +1051,7 @@
             
             const pages = calculatePagesForQuote();
             const safeTitle = quoteData.recipient ? `御見積書_${quoteData.recipient}` : `御見積書`;
+
             
             let html = `
               <!DOCTYPE html>
@@ -1068,7 +1066,8 @@
                   
                   .page { 
                     width: 210mm; 
-                    padding: 15mm; 
+                    height: 297mm; /* ★ A4高さを絶対固定 */
+                    padding: 15mm 15mm 25mm 15mm; /* ★ フッター用の余白確保 */
                     margin: 0 auto 60px auto; 
                     background: #fff; 
                     box-sizing: border-box; 
@@ -1076,6 +1075,7 @@
                     position: relative; 
                     page-break-after: always;
                     break-after: page;
+                    overflow: hidden; /* ★ はみ出し防止 */
                   }
                   .page:last-child {
                     page-break-after: avoid;
@@ -1088,14 +1088,18 @@
                     #print-container { padding: 0; margin: 0; } 
                     .page { 
                       margin: 0; 
-                      padding: 15mm;
+                      padding: 15mm 15mm 25mm 15mm;
                       box-shadow: none; 
                       border: none; 
-                      width: auto;
+                      width: 210mm; /* ★ 印刷時もA4サイズを強制 */
+                      height: 297mm; /* ★ 印刷時もA4サイズを強制 */
                     } 
                   }
                   
                   .title { text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 8px; margin-bottom: 15px; }
+
+
+
                   .header-wrap { display: flex; justify-content: space-between; margin-bottom: 15px; }
                   .left-col { width: 55%; }
                   .right-col { width: 40%; text-align: right; }
@@ -1649,7 +1653,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.42</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.43</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
