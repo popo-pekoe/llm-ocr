@@ -45,7 +45,7 @@
         };
 
         const BACKUP_WEBHOOK_URL = ""; 
-        const DRIVE_BACKUP_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyC96C6sfzyimEd01B4rTu6HR7hSwU2Z74nO52vw5ran2n7lrsTV-Gc1o34PeYbcJ4/exec"; // ★ここにGASのURLを貼り付けます
+        const DRIVE_BACKUP_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyC96C6sfzyimEd01B4rTu6HR7hSwU2Z74nO52vw5ran2n7lrsTV-Gc1o34PeYbcJ4/exec"; // ★ここにGASのWebhook URLを貼り付けます
 
         function App() {
           const [imageFiles, setImageFiles] = useState([]);
@@ -59,10 +59,6 @@
           const [analyzingIndex, setAnalyzingIndex] = useState(-1);
           const [error, setError] = useState(null);
           const [toastMessage, setToastMessage] = useState(null);
-
-          const [isTextOcrModalOpen, setIsTextOcrModalOpen] = useState(false);
-          const [ocrText, setOcrText] = useState("");
-          const [isOcrLoading, setIsOcrLoading] = useState(false);
           
           const [thumbnails, setThumbnails] = useState([]);
           const [isPageSelectModalOpen, setIsPageSelectModalOpen] = useState(false);
@@ -102,13 +98,22 @@
             recipient: '', honorific: '御中', project_name: '', project_address: '', date: '', original_total: 0, items: []
           });
 
+          // ==========================================
+          // OCR・タブ関連のステート群 (v1.45 新設)
+          // ==========================================
+          const [activeTab, setActiveTab] = useState('quote'); 
+          const [ocrMode, setOcrMode] = useState('standard');
+          const [ocrCustomPrompt, setOcrCustomPrompt] = useState('');
+          const [isOcrLoading, setIsOcrLoading] = useState(false);
+
           const panelRef = useRef(null);
           const fileInputRef = useRef(null);
 
           const defaultData = {
             document_type: "", issuer: "", recipient: "", date: "", 
             project_name: "", project_address: "",
-            total_amount: 0, items: [], isAnalyzed: false
+            total_amount: 0, items: [], isAnalyzed: false,
+            ocr_text: "" 
           };
 
           const extractedData = extractedDataList[currentFileIndex] || defaultData;
@@ -194,7 +199,7 @@
 
           const startDrag = (e) => {
             if (resizeState) return;
-            if (e.target.tagName.toLowerCase() === 'input') return;
+            if (e.target.tagName.toLowerCase() === 'input' || e.target.tagName.toLowerCase() === 'textarea') return;
             setIsDragging(true);
             const pos = getClientPos(e);
             setDragOffset({ x: pos.clientX - panelPos.x, y: pos.clientY - panelPos.y });
@@ -258,7 +263,6 @@
 
           const processFiles = async (files) => {
             if (files.length === 0) return;
-            
             setIsUploading(true);
             setLoading(true); 
             setError(null);
@@ -360,23 +364,20 @@
 
           const processParsedData = (parsedData) => {
             if (!parsedData.items) return parsedData;
-            
             parsedData.items = parsedData.items.map(item => {
               let q = item.quantity;
               let up = item.unit_price || 0;
               let p = item.price || 0;
-              
-              if (q === 0 || q === "" || q == null) {
-                q = 1;
-              }
-              if (up === 0 && p !== 0) {
-                up = p;
-              }
+              if (q === 0 || q === "" || q == null) q = 1;
+              if (up === 0 && p !== 0) up = p;
               return { ...item, quantity: q, unit_price: up, price: p };
             });
             return parsedData;
           };
 
+          // ==========================================
+          // 抽出（解析）関連ロジック
+          // ==========================================
           const analyzeImageCore = async (base64Data, mimeType, apiKey) => {
             const payload = {
               contents: [{
@@ -432,6 +433,64 @@
             }
           };
 
+          const executeTextOcr = async () => {
+            if (!userApiKey) return setShowSettings(true);
+            if (!imageSrc) return;
+            setIsOcrLoading(true);
+            
+            try {
+              const base64Data = imageSrc.split(',')[1];
+              const mimeType = imageFiles[currentFileIndex].type;
+              
+              let basePrompt = "この画像のテキストを読み取って文字起こししてください。余計な挨拶や説明は一切不要で、抽出したテキストのみを出力してください。";
+              if (ocrMode === 'key_value') {
+                basePrompt += "特に表や入力欄（名前や住所など）は、「項目名：内容」という形式に整理して出力してください。";
+              } else if (ocrMode === 'bullet') {
+                basePrompt += "文章はそのまま出力せず、主要なポイントを箇条書きで分かりやすく要約して出力してください。";
+              } else {
+                basePrompt += "段落や改行などは、できるだけ元の見た目に合わせて自然な文章として出力してください。";
+              }
+
+              if (ocrCustomPrompt.trim() !== "") {
+                basePrompt += `\n\n【追加の特別指示】: ${ocrCustomPrompt}`;
+              }
+              
+              const payload = {
+                contents: [{
+                  role: "user",
+                  parts: [{ text: basePrompt }, { inlineData: { mimeType: mimeType, data: base64Data } }]
+                }]
+              };
+
+              const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${userApiKey}`;
+              const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+              if (!response.ok) throw new Error(`APIエラー: ${response.status}`);
+              const data = await response.json();
+              const textResult = data.candidates?.[0]?.content?.parts?.[0]?.text;
+              
+              if (textResult) {
+                handleInputChange('ocr_text', textResult); 
+                setToastMessage("テキストを抽出しました");
+                setTimeout(() => setToastMessage(null), 3000);
+              } else {
+                throw new Error("抽出に失敗しました。");
+              }
+            } catch(err) {
+              setError(`OCRエラー: ${err.message}`);
+            } finally {
+              setIsOcrLoading(false);
+            }
+          };
+
+          const copyOcrText = () => {
+            const textToCopy = extractedData?.ocr_text || "";
+            if (!textToCopy) return;
+            try {
+              const textArea = document.createElement("textarea"); textArea.value = textToCopy; document.body.appendChild(textArea); textArea.select(); document.execCommand("copy"); textArea.remove();
+              setToastMessage("テキストをコピーしました"); setTimeout(() => setToastMessage(null), 3000);
+            } catch (err) { setError("コピーに失敗しました。"); }
+          };
+
           const sendBackupToSpreadsheet = (fileName, parsedData) => {
             if (!BACKUP_WEBHOOK_URL) return; 
             try {
@@ -467,66 +526,6 @@
             }
           };
 
-            // ★ 新設: テキストのみを抽出するOCR機能
-          const extractTextFromImage = async () => {
-            if (!userApiKey) return setShowSettings(true);
-            if (!imageSrc) return;
-            
-            setIsOcrLoading(true);
-            setOcrText("");
-            setIsTextOcrModalOpen(true); 
-            
-            try {
-              const base64Data = imageSrc.split(',')[1];
-              const mimeType = imageFiles[currentFileIndex].type;
-              
-              const payload = {
-                contents: [{
-                  role: "user",
-                  parts: [
-                    { text: "この画像のテキストを読み取って文字起こししてください。段落や改行などはできるだけ元の見た目に合わせてください。もし表や入力欄（名前や住所など）がある場合は、「項目名：内容」というような分かりやすいテキスト形式に変換してください。余計な挨拶や説明は一切不要です。抽出したテキストのみを出力してください。" },
-                    { inlineData: { mimeType: mimeType, data: base64Data } }
-                  ]
-                }]
-              };
-
-              const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${userApiKey}`;
-              
-              const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-              if (!response.ok) throw new Error(`APIエラー: ${response.status}`);
-              const data = await response.json();
-              const textResult = data.candidates?.[0]?.content?.parts?.[0]?.text;
-              
-              if (textResult) {
-                setOcrText(textResult);
-              } else {
-                throw new Error("テキストの抽出に失敗しました。");
-              }
-            } catch(err) {
-              setOcrText(`エラーが発生しました: ${err.message}`);
-            } finally {
-              setIsOcrLoading(false);
-            }
-          };
-
-          const copyOcrText = () => {
-            try {
-              const textArea = document.createElement("textarea"); 
-              textArea.value = ocrText; 
-              document.body.appendChild(textArea); 
-              textArea.select(); 
-              document.execCommand("copy"); 
-              textArea.remove();
-              setToastMessage("テキストをコピーしました"); 
-              setTimeout(() => setToastMessage(null), 3000);
-            } catch (err) { 
-              setError("コピーに失敗しました。"); 
-            }
-          };
-
-
-
-
           const analyzeCurrentImage = async () => {
             if (!userApiKey) return setShowSettings(true);
             if (!imageSrc) return;
@@ -540,6 +539,7 @@
               setExtractedDataList(prev => {
                 const newList = [...prev];
                 newList[currentFileIndex] = {
+                  ...newList[currentFileIndex],
                   ...parsedData,
                   isAnalyzed: true
                 };
@@ -571,7 +571,7 @@
                 
                 setExtractedDataList(prev => {
                   const newList = [...prev];
-                  newList[i] = { ...parsedData, isAnalyzed: true };
+                  newList[i] = { ...newList[i], ...parsedData, isAnalyzed: true };
                   return newList;
                 });
                 sendBackupToSpreadsheet(imageFiles[i].name, parsedData);
@@ -652,6 +652,9 @@
             dragItemIndex.current = null; dragOverItemIndex.current = null;
           };
 
+          // ==========================================
+          // 見積書作成エディタ ロジック
+          // ==========================================
           const createBlankQuote = () => {
             setQuoteSettings(prev => ({...prev, multiplier: 100}));
             setQuoteData({
@@ -700,10 +703,7 @@
                 let up = item.unit_price || 0;
                 let p = item.price || 0;
 
-                if (up === 0 && p !== 0) {
-                  up = p;
-                }
-
+                if (up === 0 && p !== 0) up = p;
                 let calcP = q * up;
 
                 return {
@@ -817,11 +817,25 @@
             container.style.cssText = 'position:absolute; left:-9999px; top:-9999px; width:210mm; background:#fff; visibility:hidden;';
             const style = document.createElement('style');
             style.innerHTML = `
-              /* ★ paddingの下部を25mmに広げ、フッターと被らないように調整 */
               .calc-page { width: 210mm; padding: 15mm 15mm 25mm 15mm; font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; box-sizing: border-box; }
               .calc-title { text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 8px; margin-bottom: 15px; }
               .calc-header-wrap { display: flex; justify-content: space-between; margin-bottom: 15px; }
-              /* ・・・中略（この間のCSSは変更なし）・・・ */
+              .calc-left-col { width: 55%; }
+              .calc-right-col { width: 40%; text-align: right; }
+              .calc-recipient { font-size: 18px; border-bottom: 1px solid #000; padding-bottom: 3px; margin-bottom: 10px; display: inline-block; min-width: 80%; }
+              .calc-info-row { display: flex; margin-bottom: 3px; }
+              .calc-info-label { width: 70px; color: #333; }
+              .calc-info-value { flex: 1; }
+              .calc-total-box { margin-top: 20px; font-size: 18px; font-weight: bold; border-bottom: 3px double #000; display: inline-block; padding: 5px 20px 5px 0; }
+              .calc-company-name { font-size: 16px; font-weight: bold; margin-bottom: 5px; }
+              table.calc-items { width: 100%; border-collapse: collapse; border: 1px solid #000; margin-bottom: 10px;}
+              table.calc-items th, table.calc-items td { border: 1px dotted #666; border-left: 1px solid #000; border-right: 1px solid #000; padding: 3px 5px; word-break: break-all; }
+              table.calc-items th { background-color: #f5f5f5; text-align: center; border-bottom: 1px solid #000; border-top: 1px solid #000; }
+              .calc-summary-table { width: 35%; border-collapse: collapse; border: 1px solid #000; margin-top: 10px; float: right; }
+              .calc-summary-table th, .calc-summary-table td { border: 1px solid #000; padding: 4px 6px; }
+              .calc-summary-table th { background: #f5f5f5; text-align: center; width: 40%; }
+              .calc-summary-table td { text-align: right; }
+              .calc-simple-header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #000; padding-bottom: 5px; margin-bottom: 15px; }
               .page-footer { position: absolute; bottom: 10mm; left: 0; width: 100%; text-align: center; font-size: 12px; color: #555; }
             `;
             container.appendChild(style);
@@ -829,16 +843,14 @@
 
             const escapeHtml = (str) => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             
-            // ★ 高さを適当なピクセルではなく、ブラウザごとの297mmの正確なピクセル値として動的取得
             const measureDiv = document.createElement('div');
             measureDiv.style.height = '297mm';
             document.body.appendChild(measureDiv);
-            const PAGE_HEIGHT_LIMIT = measureDiv.offsetHeight - 5; // 5pxの安全マージン
+            const PAGE_HEIGHT_LIMIT = measureDiv.offsetHeight - 5; 
             document.body.removeChild(measureDiv);
             
             let pages = [];
             let pageCount = 0;
-
             
             const createNewPageDOM = (isFirst) => {
               pageCount++;
@@ -963,15 +975,11 @@
             wrapper.appendChild(container);
             document.body.appendChild(wrapper);
             
-
-
             let htmlContent = `
               <style>
-                /* ★ height: 297mm と overflow: hidden を追加し、A4サイズを絶対固定 */
                 .pdf-page { width: 210mm; height: 297mm; padding: 15mm 15mm 25mm 15mm; font-family: "Noto Sans JP", sans-serif; font-size: 12px; line-height: 1.4; color: #000; box-sizing: border-box; position: relative; background: #fff; page-break-after: always; break-after: page; overflow: hidden; }
                 .pdf-page:last-child { page-break-after: avoid; break-after: avoid; }
                 .pdf-title { text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 8px; margin-bottom: 15px; }
-               
                 .header-wrap { display: flex; justify-content: space-between; margin-bottom: 15px; }
                 .left-col { width: 55%; }
                 .right-col { width: 40%; text-align: right; }
@@ -1115,7 +1123,6 @@
             
             const pages = calculatePagesForQuote();
             const safeTitle = quoteData.recipient ? `御見積書_${quoteData.recipient}` : `御見積書`;
-
             
             let html = `
               <!DOCTYPE html>
@@ -1130,8 +1137,8 @@
                   
                   .page { 
                     width: 210mm; 
-                    height: 297mm; /* ★ A4高さを絶対固定 */
-                    padding: 15mm 15mm 25mm 15mm; /* ★ フッター用の余白確保 */
+                    height: 297mm; 
+                    padding: 15mm 15mm 25mm 15mm; 
                     margin: 0 auto 60px auto; 
                     background: #fff; 
                     box-sizing: border-box; 
@@ -1139,7 +1146,7 @@
                     position: relative; 
                     page-break-after: always;
                     break-after: page;
-                    overflow: hidden; /* ★ はみ出し防止 */
+                    overflow: hidden;
                   }
                   .page:last-child {
                     page-break-after: avoid;
@@ -1155,15 +1162,12 @@
                       padding: 15mm 15mm 25mm 15mm;
                       box-shadow: none; 
                       border: none; 
-                      width: 210mm; /* ★ 印刷時もA4サイズを強制 */
-                      height: 297mm; /* ★ 印刷時もA4サイズを強制 */
+                      width: 210mm; 
+                      height: 297mm; 
                     } 
                   }
                   
                   .title { text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 8px; margin-bottom: 15px; }
-
-
-
                   .header-wrap { display: flex; justify-content: space-between; margin-bottom: 15px; }
                   .left-col { width: 55%; }
                   .right-col { width: 40%; text-align: right; }
@@ -1248,11 +1252,12 @@
               `;
 
               page.items.forEach((item) => {
+                const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
                 html += `
                   <tr>
                     <td class="text-center">${item.originalIndex + 1}</td>
                     <td>${escapeHtml(item.name)}</td>
-                    <td class="text-right">${item.quantity || ''}</td>
+                    <td class="text-right">${qText}</td>
                     <td class="text-center">${escapeHtml(item.unit)}</td>
                     <td class="text-right">${item.unit_price ? '¥' + item.unit_price.toLocaleString() : ''}</td>
                     <td class="text-right">${item.price ? '¥' + item.price.toLocaleString() : ''}</td>
@@ -1295,7 +1300,7 @@
               
               let htmlContent = `
                 <style>
-                  .pdf-page { width: 210mm; padding: 15mm; font-family: "Noto Sans JP", sans-serif; font-size: 12px; line-height: 1.4; color: #000; box-sizing: border-box; position: relative; background: #fff; page-break-after: always; break-after: page; }
+                  .pdf-page { width: 210mm; height: 297mm; padding: 15mm 15mm 25mm 15mm; font-family: "Noto Sans JP", sans-serif; font-size: 12px; line-height: 1.4; color: #000; box-sizing: border-box; position: relative; background: #fff; page-break-after: always; break-after: page; overflow: hidden; }
                   .pdf-page:last-child { page-break-after: avoid; break-after: avoid; }
                   .pdf-title { text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 8px; margin-bottom: 15px; }
                   .header-wrap { display: flex; justify-content: space-between; margin-bottom: 15px; }
@@ -1634,6 +1639,9 @@
             </th>
           );
 
+          // ==========================================
+          // パネル描画 (タブ切替含む)
+          // ==========================================
           const renderFormContent = (isOverlay = false) => {
             const inputBase = "w-full p-2 border rounded outline-none transition-colors font-medium ";
             const textInputClass = isOverlay ? inputBase + "border-gray-400/50 bg-white/40 focus:bg-white/90 text-gray-900 placeholder-gray-700/50" : inputBase + "border-gray-300 bg-white focus:ring-2 focus:ring-blue-500 text-gray-800";
@@ -1641,58 +1649,113 @@
             const labelClass = `block text-xs font-bold mb-1 ${isOverlay ? 'text-gray-800' : 'text-gray-500'}`;
 
             return (
-              <div className={`p-4 md:p-6 space-y-6 ${isOverlay ? '' : 'overflow-y-auto flex-grow'}`}>
-                {extractedData.isAnalyzed && (
-                   <div className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-800 text-xs font-bold rounded"><FaIcon name="check-circle" /> AI解析完了</div>
-                )}
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div><label className={labelClass}>書類種別</label><input type="text" value={extractedData.document_type} onChange={(e) => handleInputChange('document_type', e.target.value)} className={textInputClass} placeholder="例: 御見積書" /></div>
-                  <div><label className={labelClass}>発行日</label><input type="text" value={extractedData.date} onChange={(e) => handleInputChange('date', e.target.value)} className={textInputClass} placeholder="202X年X月X日" /></div>
-                  <div><label className={labelClass}>宛先</label><input type="text" value={extractedData.recipient} onChange={(e) => handleInputChange('recipient', e.target.value)} className={textInputClass} placeholder="株式会社〇〇" /></div>
-                  <div><label className={labelClass}>発行元</label><input type="text" value={extractedData.issuer} onChange={(e) => handleInputChange('issuer', e.target.value)} className={textInputClass} placeholder="〇〇株式会社" /></div>
-                  <div><label className={labelClass}>工事名・現場名</label><input type="text" value={extractedData.project_name} onChange={(e) => handleInputChange('project_name', e.target.value)} className={textInputClass} placeholder="〇〇邸新築工事" /></div>
-                  <div><label className={labelClass}>現場住所</label><input type="text" value={extractedData.project_address} onChange={(e) => handleInputChange('project_address', e.target.value)} className={textInputClass} placeholder="東京都〇〇区..." /></div>
-                  <div className="md:col-span-2">
-                    <label className={labelClass}>合計金額</label>
-                    <div className="relative"><span className={`absolute left-3 top-2.5 font-bold ${isOverlay ? 'text-gray-800' : 'text-gray-500'}`}>¥</span><input type="number" value={extractedData.total_amount} onChange={(e) => handleInputChange('total_amount', Number(e.target.value))} className={`${textInputClass} pl-8 text-lg text-right`} /></div>
-                  </div>
+              <div className="flex flex-col h-full">
+                {/* ★ タブ切り替えヘッダー */}
+                <div className={`flex border-b ${isOverlay ? 'border-gray-400/30 bg-white/20' : 'border-gray-200 bg-gray-50'}`}>
+                  <button onClick={() => setActiveTab('quote')} className={`flex-1 py-2 text-sm font-bold transition-colors ${activeTab === 'quote' ? (isOverlay ? 'text-blue-800 border-b-2 border-blue-800 bg-white/40' : 'text-blue-600 border-b-2 border-blue-600 bg-white') : 'text-gray-500 hover:text-gray-700 hover:bg-white/30'}`}>見積・表データ</button>
+                  <button onClick={() => setActiveTab('text')} className={`flex-1 py-2 text-sm font-bold transition-colors ${activeTab === 'text' ? (isOverlay ? 'text-emerald-800 border-b-2 border-emerald-800 bg-white/40' : 'text-emerald-600 border-b-2 border-emerald-600 bg-white') : 'text-gray-500 hover:text-gray-700 hover:bg-white/30'}`}>テキスト抽出 (OCR)</button>
                 </div>
 
-                <div className="mt-8">
-                  <div className="flex justify-between items-center mb-2">
-                    <h3 className={`font-bold ${isOverlay ? 'text-gray-900' : 'text-gray-700'}`}>明細項目</h3>
-                    <button onClick={addItem} className={`text-sm flex items-center gap-1 font-bold ${isOverlay ? 'text-blue-800 hover:text-blue-900' : 'text-blue-600 hover:text-blue-800'}`}><FaIcon name="plus" size={14} /> 行を追加</button>
-                  </div>
-                  <div className={`overflow-x-auto border rounded-lg ${isOverlay ? 'border-gray-400/50 bg-white/20' : 'border-gray-200'}`}>
-                    <table className="w-full text-sm text-left table-fixed">
-                      <thead className={`border-b ${isOverlay ? 'border-gray-400/50 text-gray-900 bg-white/40' : 'bg-gray-50 border-gray-200 text-gray-600'}`}>
-                        <tr>
-                          <th className="p-1 w-6 text-center"></th>
-                          {renderResizableHeader('品名', 'name')}
-                          {renderResizableHeader('数量', 'quantity')}
-                          {renderResizableHeader('単位', 'unit')}
-                          {renderResizableHeader('単価', 'unit_price')}
-                          {renderResizableHeader('金額', 'price')}
-                          <th className="p-2 w-10 text-center" style={{ width: columnWidths.action }}></th>
-                        </tr>
-                      </thead>
-                      <tbody className={`divide-y ${isOverlay ? 'divide-gray-400/30' : 'divide-gray-100'}`}>
-                        {extractedData.items.map((item, index) => (
-                          <tr key={index} draggable={true} onDragStart={(e) => { if (e.target.tagName.toLowerCase() === 'input') { e.preventDefault(); return; } handleRowDragStart(e, index); }} onDragEnter={(e) => handleRowDragEnter(e, index)} onDragEnd={handleRowDragEnd} onDragOver={handleRowDragOver} className={isOverlay ? 'hover:bg-white/30' : 'hover:bg-gray-50'}>
-                            <td className="p-1 text-center cursor-move text-gray-400 hover:text-gray-600 transition-colors" title="ドラッグして並び替え"><FaIcon name="grip-vertical" size={14} /></td>
-                            <td className="p-1"><input type="text" value={item.name} onChange={(e) => handleItemChange(index, 'name', e.target.value)} className={tableInputClass} /></td>
-                            <td className="p-1"><input type="number" value={item.quantity} onChange={(e) => handleItemChange(index, 'quantity', Number(e.target.value))} className={`${tableInputClass} text-right`} /></td>
-                            <td className="p-1"><input type="text" value={item.unit} onChange={(e) => handleItemChange(index, 'unit', e.target.value)} className={`${tableInputClass} text-center`} /></td>
-                            <td className="p-1"><input type="number" value={item.unit_price} onChange={(e) => handleItemChange(index, 'unit_price', Number(e.target.value))} className={`${tableInputClass} text-right`} /></td>
-                            <td className="p-1"><input type="number" value={item.price} onChange={(e) => handleItemChange(index, 'price', Number(e.target.value))} className={`${tableInputClass} text-right font-bold`} /></td>
-                            <td className="p-1 text-center"><button onClick={() => removeItem(index)} className="p-1.5 text-red-500 hover:bg-red-100/50 rounded" title="行を削除"><FaIcon name="trash" size={14} /></button></td>
-                          </tr>
-                        ))}
-                        {extractedData.items.length === 0 && (<tr><td colSpan="7" className="p-8 text-center text-gray-500 font-bold">明細データがありません</td></tr>)}
-                      </tbody>
-                    </table>
-                  </div>
+                <div className={`p-4 md:p-6 overflow-y-auto flex-grow`}>
+                  {/* ▼ タブ1: 見積フォーム ▼ */}
+                  {activeTab === 'quote' && (
+                    <div className="space-y-6 animate-fade-in">
+                      {extractedData.isAnalyzed && (
+                        <div className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-800 text-xs font-bold rounded"><FaIcon name="check-circle" /> AI解析完了</div>
+                      )}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div><label className={labelClass}>書類種別</label><input type="text" value={extractedData.document_type} onChange={(e) => handleInputChange('document_type', e.target.value)} className={textInputClass} placeholder="例: 御見積書" /></div>
+                        <div><label className={labelClass}>発行日</label><input type="text" value={extractedData.date} onChange={(e) => handleInputChange('date', e.target.value)} className={textInputClass} placeholder="202X年X月X日" /></div>
+                        <div><label className={labelClass}>宛先</label><input type="text" value={extractedData.recipient} onChange={(e) => handleInputChange('recipient', e.target.value)} className={textInputClass} placeholder="株式会社〇〇" /></div>
+                        <div><label className={labelClass}>発行元</label><input type="text" value={extractedData.issuer} onChange={(e) => handleInputChange('issuer', e.target.value)} className={textInputClass} placeholder="〇〇株式会社" /></div>
+                        <div><label className={labelClass}>工事名・現場名</label><input type="text" value={extractedData.project_name} onChange={(e) => handleInputChange('project_name', e.target.value)} className={textInputClass} placeholder="〇〇邸新築工事" /></div>
+                        <div><label className={labelClass}>現場住所</label><input type="text" value={extractedData.project_address} onChange={(e) => handleInputChange('project_address', e.target.value)} className={textInputClass} placeholder="東京都〇〇区..." /></div>
+                        <div className="md:col-span-2">
+                          <label className={labelClass}>合計金額</label>
+                          <div className="relative"><span className={`absolute left-3 top-2.5 font-bold ${isOverlay ? 'text-gray-800' : 'text-gray-500'}`}>¥</span><input type="number" value={extractedData.total_amount} onChange={(e) => handleInputChange('total_amount', Number(e.target.value))} className={`${textInputClass} pl-8 text-lg text-right`} /></div>
+                        </div>
+                      </div>
+
+                      <div className="mt-8">
+                        <div className="flex justify-between items-center mb-2">
+                          <h3 className={`font-bold ${isOverlay ? 'text-gray-900' : 'text-gray-700'}`}>明細項目</h3>
+                          <button onClick={addItem} className={`text-sm flex items-center gap-1 font-bold ${isOverlay ? 'text-blue-800 hover:text-blue-900' : 'text-blue-600 hover:text-blue-800'}`}><FaIcon name="plus" size={14} /> 行を追加</button>
+                        </div>
+                        <div className={`overflow-x-auto border rounded-lg ${isOverlay ? 'border-gray-400/50 bg-white/20' : 'border-gray-200'}`}>
+                          <table className="w-full text-sm text-left table-fixed">
+                            <thead className={`border-b ${isOverlay ? 'border-gray-400/50 text-gray-900 bg-white/40' : 'bg-gray-50 border-gray-200 text-gray-600'}`}>
+                              <tr>
+                                <th className="p-1 w-6 text-center"></th>
+                                {renderResizableHeader('品名', 'name')}
+                                {renderResizableHeader('数量', 'quantity')}
+                                {renderResizableHeader('単位', 'unit')}
+                                {renderResizableHeader('単価', 'unit_price')}
+                                {renderResizableHeader('金額', 'price')}
+                                <th className="p-2 w-10 text-center" style={{ width: columnWidths.action }}></th>
+                              </tr>
+                            </thead>
+                            <tbody className={`divide-y ${isOverlay ? 'divide-gray-400/30' : 'divide-gray-100'}`}>
+                              {extractedData.items.map((item, index) => (
+                                <tr key={index} draggable={true} onDragStart={(e) => { if (e.target.tagName.toLowerCase() === 'input') { e.preventDefault(); return; } handleRowDragStart(e, index); }} onDragEnter={(e) => handleRowDragEnter(e, index)} onDragEnd={handleRowDragEnd} onDragOver={handleRowDragOver} className={isOverlay ? 'hover:bg-white/30' : 'hover:bg-gray-50'}>
+                                  <td className="p-1 text-center cursor-move text-gray-400 hover:text-gray-600 transition-colors" title="ドラッグして並び替え"><FaIcon name="grip-vertical" size={14} /></td>
+                                  <td className="p-1"><input type="text" value={item.name} onChange={(e) => handleItemChange(index, 'name', e.target.value)} className={tableInputClass} /></td>
+                                  <td className="p-1"><input type="number" value={item.quantity} onChange={(e) => handleItemChange(index, 'quantity', Number(e.target.value))} className={`${tableInputClass} text-right`} /></td>
+                                  <td className="p-1"><input type="text" value={item.unit} onChange={(e) => handleItemChange(index, 'unit', e.target.value)} className={`${tableInputClass} text-center`} /></td>
+                                  <td className="p-1"><input type="number" value={item.unit_price} onChange={(e) => handleItemChange(index, 'unit_price', Number(e.target.value))} className={`${tableInputClass} text-right`} /></td>
+                                  <td className="p-1"><input type="number" value={item.price} onChange={(e) => handleItemChange(index, 'price', Number(e.target.value))} className={`${tableInputClass} text-right font-bold`} /></td>
+                                  <td className="p-1 text-center"><button onClick={() => removeItem(index)} className="p-1.5 text-red-500 hover:bg-red-100/50 rounded" title="行を削除"><FaIcon name="trash" size={14} /></button></td>
+                                </tr>
+                              ))}
+                              {extractedData.items.length === 0 && (<tr><td colSpan="7" className="p-8 text-center text-gray-500 font-bold">明細データがありません</td></tr>)}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ▼ タブ2: 新設テキスト抽出OCR UI ▼ */}
+                  {activeTab === 'text' && (
+                    <div className="flex flex-col h-full space-y-4 animate-fade-in">
+                      <div className={`p-3 rounded-lg border ${isOverlay ? 'bg-white/50 border-gray-400/30 shadow-sm' : 'bg-gray-50 border-gray-200'}`}>
+                        <div className="flex gap-2 mb-3">
+                          <div className="flex-1">
+                            <label className={labelClass}>抽出モード</label>
+                            <select value={ocrMode} onChange={e => setOcrMode(e.target.value)} className={textInputClass + " py-1.5"}>
+                              <option value="standard">標準 (見たまま自然に)</option>
+                              <option value="key_value">表・項目化 (項目名：内容)</option>
+                              <option value="bullet">箇条書き (要点まとめ)</option>
+                            </select>
+                          </div>
+                          <div className="flex-none flex items-end">
+                            <button onClick={executeTextOcr} disabled={isOcrLoading || !imageSrc} className="px-4 py-1.5 bg-emerald-600 text-white rounded font-bold hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2 transition-colors shadow-sm">
+                              <FaIcon name={isOcrLoading ? "spinner" : "wand-magic-sparkles"} className={isOcrLoading ? "fa-spin" : ""} />
+                              抽出実行
+                            </button>
+                          </div>
+                        </div>
+                        <div>
+                          <label className={labelClass}>追加の特別指示 (任意)</label>
+                          <input type="text" value={ocrCustomPrompt} onChange={e => setOcrCustomPrompt(e.target.value)} placeholder="例: 「お知らせ」部分だけ抽出して" className={textInputClass + " py-1.5"} />
+                        </div>
+                      </div>
+
+                      <div className="flex-grow flex flex-col relative min-h-[300px]">
+                        <div className="flex justify-between items-center mb-1">
+                          <label className={labelClass}>抽出結果</label>
+                          <button onClick={copyOcrText} disabled={!extractedData.ocr_text} className={`text-xs font-bold px-3 py-1.5 rounded flex items-center gap-1 transition-colors ${extractedData.ocr_text ? 'text-emerald-700 bg-emerald-100 hover:bg-emerald-200 shadow-sm' : 'text-gray-400 bg-gray-100'}`}>
+                            <FaIcon name="copy" /> コピー
+                          </button>
+                        </div>
+                        <textarea 
+                          value={extractedData.ocr_text || ""}
+                          onChange={(e) => handleInputChange('ocr_text', e.target.value)}
+                          placeholder={isOcrLoading ? "画像を解析してテキストを抽出しています..." : "ここに抽出されたテキストが表示されます。手動で編集も可能です。"}
+                          className={`w-full h-full flex-grow p-4 border rounded-lg outline-none resize-none font-sans text-sm leading-relaxed ${isOverlay ? 'bg-white/70 border-gray-400/50 focus:bg-white text-gray-900 shadow-inner' : 'bg-white border-gray-300 focus:ring-2 focus:ring-emerald-500'}`}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -1717,7 +1780,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.44</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.45</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
@@ -1778,11 +1841,6 @@
                   </div>
 
                   <div className="flex gap-2">
-                    {/* ★追加: テキスト抽出ボタン（divの中、表示中を処理ボタンの前に並べます） */}
-                    <button onClick={extractTextFromImage} disabled={!imageSrc || loading || isAnalyzingAll || !userApiKey || isOcrLoading} className="flex items-center gap-2 px-4 py-2 bg-white border border-emerald-600 text-emerald-600 rounded-md hover:bg-emerald-50 disabled:opacity-50 font-bold">
-                      <FaIcon name={isOcrLoading ? "spinner" : "file-lines"} size={16} className={isOcrLoading ? "fa-spin" : ""} />
-                      テキスト抽出
-                    </button>
                     <button onClick={analyzeCurrentImage} disabled={!imageSrc || loading || isAnalyzingAll || !userApiKey} className="flex items-center gap-2 px-4 py-2 bg-white border border-blue-600 text-blue-600 rounded-md hover:bg-blue-50 disabled:opacity-50 font-bold"><FaIcon name={loading && !isAnalyzingAll ? "spinner" : "play"} size={16} className={loading && !isAnalyzingAll ? "fa-spin" : ""} />表示中を処理</button>
                     {imageFiles.length > 1 && <button onClick={() => isAnalyzingAll ? null : openPageSelectModal()} disabled={!imageSrc || loading || !userApiKey} className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 disabled:opacity-50 font-bold"><FaIcon name={isAnalyzingAll ? "spinner" : "list-check"} size={16} className={isAnalyzingAll ? "fa-spin" : ""} />{isAnalyzingAll ? `一括処理中(${analyzingIndex + 1}/${imageFiles.length})` : '選択して一括'}</button>}
                   </div>
@@ -2035,40 +2093,6 @@
                   </div>
                 </div>
               )}
-
-
-              {/* ★ 新設: テキスト抽出結果モーダル */}
-              {isTextOcrModalOpen && (
-                <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4 animate-fade-in">
-                  <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl flex flex-col overflow-hidden" style={{ height: '80vh' }}>
-                    <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-                      <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2"><FaIcon name="file-lines" className="text-emerald-600" /> テキスト抽出結果</h2>
-                      <button onClick={() => setIsTextOcrModalOpen(false)} className="text-gray-500 hover:text-gray-700"><FaIcon name="xmark" size={20} /></button>
-                    </div>
-                    <div className="flex-grow p-4 bg-gray-100 overflow-hidden flex flex-col">
-                      {isOcrLoading ? (
-                        <div className="flex-grow flex flex-col items-center justify-center text-gray-500 gap-3">
-                          <FaIcon name="spinner" className="fa-spin text-emerald-500" size={32} />
-                          <p className="font-bold">画像を解析し、テキストを文字起こししています...</p>
-                        </div>
-                      ) : (
-                        <textarea 
-                          value={ocrText}
-                          onChange={(e) => setOcrText(e.target.value)}
-                          className="w-full h-full flex-grow p-5 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 resize-none font-sans text-sm leading-relaxed"
-                        />
-                      )}
-                    </div>
-                    <div className="p-4 border-t border-gray-200 flex justify-end gap-3 bg-white">
-                      <button onClick={() => setIsTextOcrModalOpen(false)} className="px-5 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">閉じる</button>
-                      <button onClick={copyOcrText} disabled={isOcrLoading || !ocrText} className="flex items-center gap-2 px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 font-bold shadow-sm">
-                        <FaIcon name="copy" /> コピーする
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
 
               {showSettings && (
                 <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
