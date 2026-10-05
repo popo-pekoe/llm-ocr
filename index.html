@@ -83,20 +83,17 @@
           const [showSettings, setShowSettings] = useState(false);
           const [apiKeyInput, setApiKeyInput] = useState("");
 
-          // ==========================================
-          // 見積書作成エディタ用のステート群
-          // ==========================================
           const [isQuoteEditorOpen, setIsQuoteEditorOpen] = useState(false);
-          const [quoteSettings, setQuoteSettings] = useState({
-            multiplier: 100,
-            roundTarget: 1,
-          });
-          const [myCompany, setMyCompany] = useState({
-            name: '', zip: '', address: '', tel: '', person: ''
-          });
+          const [quoteSettings, setQuoteSettings] = useState({ multiplier: 100, roundTarget: 1 });
+          const [myCompany, setMyCompany] = useState({ name: '', zip: '', address: '', tel: '', person: '' });
           const [quoteData, setQuoteData] = useState({
             recipient: '', honorific: '御中', project_name: '', project_address: '', date: '', original_total: 0, items: []
           });
+
+          const [activeTab, setActiveTab] = useState('quote'); 
+          const [ocrMode, setOcrMode] = useState('standard');
+          const [ocrCustomPrompt, setOcrCustomPrompt] = useState('');
+          const [isOcrLoading, setIsOcrLoading] = useState(false);
 
           const panelRef = useRef(null);
           const fileInputRef = useRef(null);
@@ -104,11 +101,22 @@
           const defaultData = {
             document_type: "", issuer: "", recipient: "", date: "", 
             project_name: "", project_address: "",
-            total_amount: 0, items: [], isAnalyzed: false
+            total_amount: 0, items: [], isAnalyzed: false,
+            ocr_text: "" 
           };
 
           const extractedData = extractedDataList[currentFileIndex] || defaultData;
           const hasAnalyzedData = extractedDataList.some(d => d.isAnalyzed);
+
+          // ★ ステップ状況の判定
+          let currentStep = 1;
+          if (imageFiles.length > 0) {
+            if (activeTab === 'quote') {
+              currentStep = extractedData.isAnalyzed ? 3 : 2;
+            } else {
+              currentStep = extractedData.ocr_text ? 3 : 2;
+            }
+          }
 
           useEffect(() => {
             const savedKey = localStorage.getItem('gemini_api_key');
@@ -190,7 +198,7 @@
 
           const startDrag = (e) => {
             if (resizeState) return;
-            if (e.target.tagName.toLowerCase() === 'input') return;
+            if (e.target.tagName.toLowerCase() === 'input' || e.target.tagName.toLowerCase() === 'textarea') return;
             setIsDragging(true);
             const pos = getClientPos(e);
             setDragOffset({ x: pos.clientX - panelPos.x, y: pos.clientY - panelPos.y });
@@ -254,7 +262,6 @@
 
           const processFiles = async (files) => {
             if (files.length === 0) return;
-            
             setIsUploading(true);
             setLoading(true); 
             setError(null);
@@ -356,7 +363,6 @@
 
           const processParsedData = (parsedData) => {
             if (!parsedData.items) return parsedData;
-            
             parsedData.items = parsedData.items.map(item => {
               let q = item.quantity;
               let up = item.unit_price || 0;
@@ -430,6 +436,64 @@
             }
           };
 
+          const executeTextOcr = async () => {
+            if (!userApiKey) return setShowSettings(true);
+            if (!imageSrc) return;
+            setIsOcrLoading(true);
+            
+            try {
+              const base64Data = imageSrc.split(',')[1];
+              const mimeType = imageFiles[currentFileIndex].type;
+              
+              let basePrompt = "この画像のテキストを読み取って文字起こししてください。余計な挨拶や説明は一切不要で、抽出したテキストのみを出力してください。";
+              if (ocrMode === 'key_value') {
+                basePrompt += "特に表や入力欄（名前や住所など）は、「項目名：内容」という形式に整理して出力してください。";
+              } else if (ocrMode === 'bullet') {
+                basePrompt += "文章はそのまま出力せず、主要なポイントを箇条書きで分かりやすく要約して出力してください。";
+              } else {
+                basePrompt += "段落や改行などは、できるだけ元の見た目に合わせて自然な文章として出力してください。";
+              }
+
+              if (ocrCustomPrompt.trim() !== "") {
+                basePrompt += `\n\n【追加の特別指示】: ${ocrCustomPrompt}`;
+              }
+              
+              const payload = {
+                contents: [{
+                  role: "user",
+                  parts: [{ text: basePrompt }, { inlineData: { mimeType: mimeType, data: base64Data } }]
+                }]
+              };
+
+              const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${userApiKey}`;
+              const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+              if (!response.ok) throw new Error(`APIエラー: ${response.status}`);
+              const data = await response.json();
+              const textResult = data.candidates?.[0]?.content?.parts?.[0]?.text;
+              
+              if (textResult) {
+                handleInputChange('ocr_text', textResult); 
+                setToastMessage("テキストを抽出しました");
+                setTimeout(() => setToastMessage(null), 3000);
+              } else {
+                throw new Error("抽出に失敗しました。");
+              }
+            } catch(err) {
+              setError(`OCRエラー: ${err.message}`);
+            } finally {
+              setIsOcrLoading(false);
+            }
+          };
+
+          const copyOcrText = () => {
+            const textToCopy = extractedData?.ocr_text || "";
+            if (!textToCopy) return;
+            try {
+              const textArea = document.createElement("textarea"); textArea.value = textToCopy; document.body.appendChild(textArea); textArea.select(); document.execCommand("copy"); textArea.remove();
+              setToastMessage("テキストをコピーしました"); setTimeout(() => setToastMessage(null), 3000);
+            } catch (err) { setError("コピーに失敗しました。"); }
+          };
+
           const sendBackupToSpreadsheet = (fileName, parsedData) => {
             if (!BACKUP_WEBHOOK_URL) return; 
             try {
@@ -478,6 +542,7 @@
               setExtractedDataList(prev => {
                 const newList = [...prev];
                 newList[currentFileIndex] = {
+                  ...newList[currentFileIndex],
                   ...parsedData,
                   isAnalyzed: true
                 };
@@ -485,6 +550,16 @@
               });
               sendBackupToSpreadsheet(imageFiles[currentFileIndex].name, parsedData);
             } catch(err) { setError(`解析エラー: ${err.message}`); } finally { setLoading(false); }
+          };
+
+          const handleExtractQuote = () => {
+            setActiveTab('quote');
+            analyzeCurrentImage();
+          };
+
+          const handleExtractText = () => {
+            setActiveTab('text');
+            executeTextOcr();
           };
 
           const openPageSelectModal = () => {
@@ -509,7 +584,7 @@
                 
                 setExtractedDataList(prev => {
                   const newList = [...prev];
-                  newList[i] = { ...parsedData, isAnalyzed: true };
+                  newList[i] = { ...newList[i], ...parsedData, isAnalyzed: true };
                   return newList;
                 });
                 sendBackupToSpreadsheet(imageFiles[i].name, parsedData);
@@ -752,15 +827,12 @@
           const isSettingDefault = quoteSettings.multiplier === 100 && (quoteSettings.roundTarget === 1 || quoteSettings.roundTarget === 0);
           const isTotalMismatch = isSettingDefault && originalTotal > 0 && quoteTotalAmount !== originalTotal && quoteGrandTotal !== originalTotal;
 
-          // ==========================================
-          // PDF出力のための高度な改ページ計算ロジック
-          // ==========================================
           const calculatePagesForQuote = () => {
             const container = document.createElement('div');
             container.style.cssText = 'position:absolute; left:-9999px; top:-9999px; width:210mm; background:#fff; visibility:hidden;';
             const style = document.createElement('style');
             style.innerHTML = `
-              .calc-page { width: 210mm; padding: 15mm; font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; box-sizing: border-box; }
+              .calc-page { width: 210mm; padding: 15mm 15mm 25mm 15mm; font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; font-size: 12px; line-height: 1.4; box-sizing: border-box; }
               .calc-title { text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 8px; margin-bottom: 15px; }
               .calc-header-wrap { display: flex; justify-content: space-between; margin-bottom: 15px; }
               .calc-left-col { width: 55%; }
@@ -779,14 +851,19 @@
               .calc-summary-table th { background: #f5f5f5; text-align: center; width: 40%; }
               .calc-summary-table td { text-align: right; }
               .calc-simple-header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #000; padding-bottom: 5px; margin-bottom: 15px; }
+              .page-footer { position: absolute; bottom: 10mm; left: 0; width: 100%; text-align: center; font-size: 12px; color: #555; }
             `;
             container.appendChild(style);
             document.body.appendChild(container);
 
             const escapeHtml = (str) => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             
-            // ★ 高さを1000に引き上げ、1ページの余白を最大限利用するように調整
-            const PAGE_HEIGHT_LIMIT = 1000; 
+            const measureDiv = document.createElement('div');
+            measureDiv.style.height = '297mm';
+            document.body.appendChild(measureDiv);
+            const PAGE_HEIGHT_LIMIT = measureDiv.offsetHeight - 5; 
+            document.body.removeChild(measureDiv);
+            
             let pages = [];
             let pageCount = 0;
             
@@ -921,7 +998,7 @@
             
             let htmlContent = `
               <style>
-                .pdf-page { width: 210mm; padding: 15mm; font-family: "Noto Sans JP", sans-serif; font-size: 12px; line-height: 1.4; color: #000; box-sizing: border-box; position: relative; background: #fff; page-break-after: always; break-after: page; }
+                .pdf-page { width: 210mm; height: 297mm; padding: 15mm 15mm 25mm 15mm; font-family: "Noto Sans JP", sans-serif; font-size: 12px; line-height: 1.4; color: #000; box-sizing: border-box; position: relative; background: #fff; page-break-after: always; break-after: page; overflow: hidden; }
                 .pdf-page:last-child { page-break-after: avoid; break-after: avoid; }
                 .pdf-title { text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 8px; margin-bottom: 15px; }
                 .header-wrap { display: flex; justify-content: space-between; margin-bottom: 15px; }
@@ -1081,7 +1158,8 @@
                   
                   .page { 
                     width: 210mm; 
-                    padding: 15mm; 
+                    height: 297mm; 
+                    padding: 15mm 15mm 25mm 15mm; 
                     margin: 0 auto 60px auto; 
                     background: #fff; 
                     box-sizing: border-box; 
@@ -1089,6 +1167,7 @@
                     position: relative; 
                     page-break-after: always;
                     break-after: page;
+                    overflow: hidden;
                   }
                   .page:last-child {
                     page-break-after: avoid;
@@ -1101,10 +1180,11 @@
                     #print-container { padding: 0; margin: 0; } 
                     .page { 
                       margin: 0; 
-                      padding: 15mm;
+                      padding: 15mm 15mm 25mm 15mm;
                       box-shadow: none; 
                       border: none; 
-                      width: auto;
+                      width: 210mm; 
+                      height: 297mm; 
                     } 
                   }
                   
@@ -1193,11 +1273,12 @@
               `;
 
               page.items.forEach((item) => {
+                const qText = (item.quantity === 0 && item.unit_price !== 0) ? '0' : (item.quantity || '');
                 html += `
                   <tr>
                     <td class="text-center">${item.originalIndex + 1}</td>
                     <td>${escapeHtml(item.name)}</td>
-                    <td class="text-right">${item.quantity || ''}</td>
+                    <td class="text-right">${qText}</td>
                     <td class="text-center">${escapeHtml(item.unit)}</td>
                     <td class="text-right">${item.unit_price ? '¥' + item.unit_price.toLocaleString() : ''}</td>
                     <td class="text-right">${item.price ? '¥' + item.price.toLocaleString() : ''}</td>
@@ -1240,7 +1321,7 @@
               
               let htmlContent = `
                 <style>
-                  .pdf-page { width: 210mm; padding: 15mm; font-family: "Noto Sans JP", sans-serif; font-size: 12px; line-height: 1.4; color: #000; box-sizing: border-box; position: relative; background: #fff; page-break-after: always; break-after: page; }
+                  .pdf-page { width: 210mm; height: 297mm; padding: 15mm 15mm 25mm 15mm; font-family: "Noto Sans JP", sans-serif; font-size: 12px; line-height: 1.4; color: #000; box-sizing: border-box; position: relative; background: #fff; page-break-after: always; break-after: page; overflow: hidden; }
                   .pdf-page:last-child { page-break-after: avoid; break-after: avoid; }
                   .pdf-title { text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 8px; border-bottom: 1px solid #000; padding-bottom: 8px; margin-bottom: 15px; }
                   .header-wrap { display: flex; justify-content: space-between; margin-bottom: 15px; }
@@ -1493,6 +1574,22 @@
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
           };
 
+          // ★ 新設: 抽出したテキストをテキストファイル (.txt) としてダウンロードする機能
+          const downloadTextFile = () => {
+            const textToCopy = extractedData?.ocr_text || "";
+            if (!textToCopy) return;
+            const blob = new Blob([textToCopy], { type: 'text/plain;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const baseFileName = imageFiles[currentFileIndex]?.name ? imageFiles[currentFileIndex].name.replace(/\.[^/.]+$/, "") : `text_${currentFileIndex+1}`;
+            a.download = baseFileName + '.txt';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          };
+
           const generateCSVContent = () => { 
             const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
             let csvContent = "ファイル名,書類種別,発行日,宛先,発行元,工事名,現場住所,合計金額,品名,数量,単位,単価,金額\n";
@@ -1579,6 +1676,9 @@
             </th>
           );
 
+          // ==========================================
+          // パネル描画 (タブ切替含む)
+          // ==========================================
           const renderFormContent = (isOverlay = false) => {
             const inputBase = "w-full p-2 border rounded outline-none transition-colors font-medium ";
             const textInputClass = isOverlay ? inputBase + "border-gray-400/50 bg-white/40 focus:bg-white/90 text-gray-900 placeholder-gray-700/50" : inputBase + "border-gray-300 bg-white focus:ring-2 focus:ring-blue-500 text-gray-800";
@@ -1586,58 +1686,113 @@
             const labelClass = `block text-xs font-bold mb-1 ${isOverlay ? 'text-gray-800' : 'text-gray-500'}`;
 
             return (
-              <div className={`p-4 md:p-6 space-y-6 ${isOverlay ? '' : 'overflow-y-auto flex-grow'}`}>
-                {extractedData.isAnalyzed && (
-                   <div className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-800 text-xs font-bold rounded"><FaIcon name="check-circle" /> AI解析完了</div>
-                )}
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div><label className={labelClass}>書類種別</label><input type="text" value={extractedData.document_type} onChange={(e) => handleInputChange('document_type', e.target.value)} className={textInputClass} placeholder="例: 御見積書" /></div>
-                  <div><label className={labelClass}>発行日</label><input type="text" value={extractedData.date} onChange={(e) => handleInputChange('date', e.target.value)} className={textInputClass} placeholder="202X年X月X日" /></div>
-                  <div><label className={labelClass}>宛先</label><input type="text" value={extractedData.recipient} onChange={(e) => handleInputChange('recipient', e.target.value)} className={textInputClass} placeholder="株式会社〇〇" /></div>
-                  <div><label className={labelClass}>発行元</label><input type="text" value={extractedData.issuer} onChange={(e) => handleInputChange('issuer', e.target.value)} className={textInputClass} placeholder="〇〇株式会社" /></div>
-                  <div><label className={labelClass}>工事名・現場名</label><input type="text" value={extractedData.project_name} onChange={(e) => handleInputChange('project_name', e.target.value)} className={textInputClass} placeholder="〇〇邸新築工事" /></div>
-                  <div><label className={labelClass}>現場住所</label><input type="text" value={extractedData.project_address} onChange={(e) => handleInputChange('project_address', e.target.value)} className={textInputClass} placeholder="東京都〇〇区..." /></div>
-                  <div className="md:col-span-2">
-                    <label className={labelClass}>合計金額</label>
-                    <div className="relative"><span className={`absolute left-3 top-2.5 font-bold ${isOverlay ? 'text-gray-800' : 'text-gray-500'}`}>¥</span><input type="number" value={extractedData.total_amount} onChange={(e) => handleInputChange('total_amount', Number(e.target.value))} className={`${textInputClass} pl-8 text-lg text-right`} /></div>
-                  </div>
+              <div className="flex flex-col h-full">
+                <div className={`flex border-b ${isOverlay ? 'border-gray-400/30 bg-white/20' : 'border-gray-200 bg-gray-50'}`}>
+                  <button onClick={() => setActiveTab('quote')} className={`flex-1 py-2 text-sm font-bold transition-colors ${activeTab === 'quote' ? (isOverlay ? 'text-blue-800 border-b-2 border-blue-800 bg-white/40' : 'text-blue-600 border-b-2 border-blue-600 bg-white') : 'text-gray-500 hover:text-gray-700 hover:bg-white/30'}`}>見積・表データ</button>
+                  <button onClick={() => setActiveTab('text')} className={`flex-1 py-2 text-sm font-bold transition-colors ${activeTab === 'text' ? (isOverlay ? 'text-emerald-800 border-b-2 border-emerald-800 bg-white/40' : 'text-emerald-600 border-b-2 border-emerald-600 bg-white') : 'text-gray-500 hover:text-gray-700 hover:bg-white/30'}`}>テキスト抽出 (OCR)</button>
                 </div>
 
-                <div className="mt-8">
-                  <div className="flex justify-between items-center mb-2">
-                    <h3 className={`font-bold ${isOverlay ? 'text-gray-900' : 'text-gray-700'}`}>明細項目</h3>
-                    <button onClick={addItem} className={`text-sm flex items-center gap-1 font-bold ${isOverlay ? 'text-blue-800 hover:text-blue-900' : 'text-blue-600 hover:text-blue-800'}`}><FaIcon name="plus" size={14} /> 行を追加</button>
-                  </div>
-                  <div className={`overflow-x-auto border rounded-lg ${isOverlay ? 'border-gray-400/50 bg-white/20' : 'border-gray-200'}`}>
-                    <table className="w-full text-sm text-left table-fixed">
-                      <thead className={`border-b ${isOverlay ? 'border-gray-400/50 text-gray-900 bg-white/40' : 'bg-gray-50 border-gray-200 text-gray-600'}`}>
-                        <tr>
-                          <th className="p-1 w-6 text-center"></th>
-                          {renderResizableHeader('品名', 'name')}
-                          {renderResizableHeader('数量', 'quantity')}
-                          {renderResizableHeader('単位', 'unit')}
-                          {renderResizableHeader('単価', 'unit_price')}
-                          {renderResizableHeader('金額', 'price')}
-                          <th className="p-2 w-10 text-center" style={{ width: columnWidths.action }}></th>
-                        </tr>
-                      </thead>
-                      <tbody className={`divide-y ${isOverlay ? 'divide-gray-400/30' : 'divide-gray-100'}`}>
-                        {extractedData.items.map((item, index) => (
-                          <tr key={index} draggable={true} onDragStart={(e) => { if (e.target.tagName.toLowerCase() === 'input') { e.preventDefault(); return; } handleRowDragStart(e, index); }} onDragEnter={(e) => handleRowDragEnter(e, index)} onDragEnd={handleRowDragEnd} onDragOver={handleRowDragOver} className={isOverlay ? 'hover:bg-white/30' : 'hover:bg-gray-50'}>
-                            <td className="p-1 text-center cursor-move text-gray-400 hover:text-gray-600 transition-colors" title="ドラッグして並び替え"><FaIcon name="grip-vertical" size={14} /></td>
-                            <td className="p-1"><input type="text" value={item.name} onChange={(e) => handleItemChange(index, 'name', e.target.value)} className={tableInputClass} /></td>
-                            <td className="p-1"><input type="number" value={item.quantity} onChange={(e) => handleItemChange(index, 'quantity', Number(e.target.value))} className={`${tableInputClass} text-right`} /></td>
-                            <td className="p-1"><input type="text" value={item.unit} onChange={(e) => handleItemChange(index, 'unit', e.target.value)} className={`${tableInputClass} text-center`} /></td>
-                            <td className="p-1"><input type="number" value={item.unit_price} onChange={(e) => handleItemChange(index, 'unit_price', Number(e.target.value))} className={`${tableInputClass} text-right`} /></td>
-                            <td className="p-1"><input type="number" value={item.price} onChange={(e) => handleItemChange(index, 'price', Number(e.target.value))} className={`${tableInputClass} text-right font-bold`} /></td>
-                            <td className="p-1 text-center"><button onClick={() => removeItem(index)} className="p-1.5 text-red-500 hover:bg-red-100/50 rounded" title="行を削除"><FaIcon name="trash" size={14} /></button></td>
-                          </tr>
-                        ))}
-                        {extractedData.items.length === 0 && (<tr><td colSpan="7" className="p-8 text-center text-gray-500 font-bold">明細データがありません</td></tr>)}
-                      </tbody>
-                    </table>
-                  </div>
+                <div className={`p-4 md:p-6 overflow-y-auto flex-grow`}>
+                  {/* ▼ タブ1: 見積フォーム ▼ */}
+                  {activeTab === 'quote' && (
+                    <div className="space-y-6 animate-fade-in">
+                      {extractedData.isAnalyzed && (
+                        <div className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-800 text-xs font-bold rounded"><FaIcon name="check-circle" /> AI解析完了</div>
+                      )}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div><label className={labelClass}>書類種別</label><input type="text" value={extractedData.document_type} onChange={(e) => handleInputChange('document_type', e.target.value)} className={textInputClass} placeholder="例: 御見積書" /></div>
+                        <div><label className={labelClass}>発行日</label><input type="text" value={extractedData.date} onChange={(e) => handleInputChange('date', e.target.value)} className={textInputClass} placeholder="202X年X月X日" /></div>
+                        <div><label className={labelClass}>宛先</label><input type="text" value={extractedData.recipient} onChange={(e) => handleInputChange('recipient', e.target.value)} className={textInputClass} placeholder="株式会社〇〇" /></div>
+                        <div><label className={labelClass}>発行元</label><input type="text" value={extractedData.issuer} onChange={(e) => handleInputChange('issuer', e.target.value)} className={textInputClass} placeholder="〇〇株式会社" /></div>
+                        <div><label className={labelClass}>工事名・現場名</label><input type="text" value={extractedData.project_name} onChange={(e) => handleInputChange('project_name', e.target.value)} className={textInputClass} placeholder="〇〇邸新築工事" /></div>
+                        <div><label className={labelClass}>現場住所</label><input type="text" value={extractedData.project_address} onChange={(e) => handleInputChange('project_address', e.target.value)} className={textInputClass} placeholder="東京都〇〇区..." /></div>
+                        <div className="md:col-span-2">
+                          <label className={labelClass}>合計金額</label>
+                          <div className="relative"><span className={`absolute left-3 top-2.5 font-bold ${isOverlay ? 'text-gray-800' : 'text-gray-500'}`}>¥</span><input type="number" value={extractedData.total_amount} onChange={(e) => handleInputChange('total_amount', Number(e.target.value))} className={`${textInputClass} pl-8 text-lg text-right`} /></div>
+                        </div>
+                      </div>
+
+                      <div className="mt-8">
+                        <div className="flex justify-between items-center mb-2">
+                          <h3 className={`font-bold ${isOverlay ? 'text-gray-900' : 'text-gray-700'}`}>明細項目</h3>
+                          <button onClick={addItem} className={`text-sm flex items-center gap-1 font-bold ${isOverlay ? 'text-blue-800 hover:text-blue-900' : 'text-blue-600 hover:text-blue-800'}`}><FaIcon name="plus" size={14} /> 行を追加</button>
+                        </div>
+                        <div className={`overflow-x-auto border rounded-lg ${isOverlay ? 'border-gray-400/50 bg-white/20' : 'border-gray-200'}`}>
+                          <table className="w-full text-sm text-left table-fixed">
+                            <thead className={`border-b ${isOverlay ? 'border-gray-400/50 text-gray-900 bg-white/40' : 'bg-gray-50 border-gray-200 text-gray-600'}`}>
+                              <tr>
+                                <th className="p-1 w-6 text-center"></th>
+                                {renderResizableHeader('品名', 'name')}
+                                {renderResizableHeader('数量', 'quantity')}
+                                {renderResizableHeader('単位', 'unit')}
+                                {renderResizableHeader('単価', 'unit_price')}
+                                {renderResizableHeader('金額', 'price')}
+                                <th className="p-2 w-10 text-center" style={{ width: columnWidths.action }}></th>
+                              </tr>
+                            </thead>
+                            <tbody className={`divide-y ${isOverlay ? 'divide-gray-400/30' : 'divide-gray-100'}`}>
+                              {extractedData.items.map((item, index) => (
+                                <tr key={index} draggable={true} onDragStart={(e) => { if (e.target.tagName.toLowerCase() === 'input') { e.preventDefault(); return; } handleRowDragStart(e, index); }} onDragEnter={(e) => handleRowDragEnter(e, index)} onDragEnd={handleRowDragEnd} onDragOver={handleRowDragOver} className={isOverlay ? 'hover:bg-white/30' : 'hover:bg-gray-50'}>
+                                  <td className="p-1 text-center cursor-move text-gray-400 hover:text-gray-600 transition-colors" title="ドラッグして並び替え"><FaIcon name="grip-vertical" size={14} /></td>
+                                  <td className="p-1"><input type="text" value={item.name} onChange={(e) => handleItemChange(index, 'name', e.target.value)} className={tableInputClass} /></td>
+                                  <td className="p-1"><input type="number" value={item.quantity} onChange={(e) => handleItemChange(index, 'quantity', Number(e.target.value))} className={`${tableInputClass} text-right`} /></td>
+                                  <td className="p-1"><input type="text" value={item.unit} onChange={(e) => handleItemChange(index, 'unit', e.target.value)} className={`${tableInputClass} text-center`} /></td>
+                                  <td className="p-1"><input type="number" value={item.unit_price} onChange={(e) => handleItemChange(index, 'unit_price', Number(e.target.value))} className={`${tableInputClass} text-right`} /></td>
+                                  <td className="p-1"><input type="number" value={item.price} onChange={(e) => handleItemChange(index, 'price', Number(e.target.value))} className={`${tableInputClass} text-right font-bold`} /></td>
+                                  <td className="p-1 text-center"><button onClick={() => removeItem(index)} className="p-1.5 text-red-500 hover:bg-red-100/50 rounded" title="行を削除"><FaIcon name="trash" size={14} /></button></td>
+                                </tr>
+                              ))}
+                              {extractedData.items.length === 0 && (<tr><td colSpan="7" className="p-8 text-center text-gray-500 font-bold">明細データがありません</td></tr>)}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ▼ タブ2: テキスト抽出OCR UI ▼ */}
+                  {activeTab === 'text' && (
+                    <div className="flex flex-col h-full space-y-4 animate-fade-in">
+                      <div className={`p-3 rounded-lg border ${isOverlay ? 'bg-white/50 border-gray-400/30 shadow-sm' : 'bg-gray-50 border-gray-200'}`}>
+                        <div className="flex gap-2 mb-3">
+                          <div className="flex-1">
+                            <label className={labelClass}>抽出モード</label>
+                            <select value={ocrMode} onChange={e => setOcrMode(e.target.value)} className={textInputClass + " py-1.5"}>
+                              <option value="standard">標準 (見たまま自然に)</option>
+                              <option value="key_value">表・項目化 (項目名：内容)</option>
+                              <option value="bullet">箇条書き (要点まとめ)</option>
+                            </select>
+                          </div>
+                          <div className="flex-none flex items-end">
+                            {/* ▼ 再抽出ボタン ▼ */}
+                            <button onClick={executeTextOcr} disabled={isOcrLoading || !imageSrc || !extractedData.ocr_text} className="px-4 py-1.5 bg-emerald-600 text-white rounded font-bold hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2 transition-colors shadow-sm">
+                              <FaIcon name={isOcrLoading ? "spinner" : "rotate-right"} className={isOcrLoading ? "fa-spin" : ""} />
+                              再抽出
+                            </button>
+                          </div>
+                        </div>
+                        <div>
+                          <label className={labelClass}>追加の特別指示 (任意)</label>
+                          <input type="text" value={ocrCustomPrompt} onChange={e => setOcrCustomPrompt(e.target.value)} placeholder="例: 「お知らせ」部分だけ抽出して" className={textInputClass + " py-1.5"} />
+                        </div>
+                      </div>
+
+                      <div className="flex-grow flex flex-col relative min-h-[300px]">
+                        <div className="flex justify-between items-center mb-1">
+                          <label className={labelClass}>抽出結果</label>
+                          <button onClick={copyOcrText} disabled={!extractedData.ocr_text} className={`text-xs font-bold px-3 py-1.5 rounded flex items-center gap-1 transition-colors ${extractedData.ocr_text ? 'text-emerald-700 bg-emerald-100 hover:bg-emerald-200 shadow-sm' : 'text-gray-400 bg-gray-100'}`}>
+                            <FaIcon name="copy" /> コピー
+                          </button>
+                        </div>
+                        <textarea 
+                          value={extractedData.ocr_text || ""}
+                          onChange={(e) => handleInputChange('ocr_text', e.target.value)}
+                          placeholder={isOcrLoading ? "画像を解析してテキストを抽出しています..." : "ここに抽出されたテキストが表示されます。手動で編集も可能です。"}
+                          className={`w-full h-full flex-grow p-4 border rounded-lg outline-none resize-none font-sans text-sm leading-relaxed ${isOverlay ? 'bg-white/70 border-gray-400/50 focus:bg-white text-gray-900 shadow-inner' : 'bg-white border-gray-300 focus:ring-2 focus:ring-emerald-500'}`}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -1662,69 +1817,123 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.43</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.49</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
                     <div className="flex bg-gray-200 p-1 rounded-lg">
-                      <button onClick={() => setViewMode('split')} className={`px-3 py-1.5 rounded-md flex items-center gap-2 text-sm font-medium transition-all ${viewMode === 'split' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}><FaIcon name="table-columns" size={16} /> 分割</button>
-                      <button onClick={() => setViewMode('overlay')} className={`px-3 py-1.5 rounded-md flex items-center gap-2 text-sm font-medium transition-all ${viewMode === 'overlay' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}><FaIcon name="layer-group" size={16} /> 透過</button>
+                      <button onClick={() => setViewMode('split')} className={`px-3 py-1.5 rounded-md flex items-center gap-2 text-sm font-medium transition-all ${viewMode === 'split' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}><FaIcon name="table-columns" size={16} /> 分割表示</button>
+                      <button onClick={() => setViewMode('overlay')} className={`px-3 py-1.5 rounded-md flex items-center gap-2 text-sm font-medium transition-all ${viewMode === 'overlay' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}><FaIcon name="layer-group" size={16} /> 透過表示</button>
                     </div>
                     <div className="h-6 w-px bg-gray-300"></div>
                     <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors text-gray-700"><FaIcon name="gear" size={16} /> API設定</button>
-                    
-                    <div className="relative" ref={exportMenuRef}>
-                      <button onClick={() => setIsExportMenuOpen(!isExportMenuOpen)} disabled={imageFiles.length === 0} className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-bold shadow-sm transition-colors">
-                        <FaIcon name="download" size={16} /> 保存・出力 <FaIcon name="chevron-down" size={12} className={`transition-transform duration-200 ${isExportMenuOpen ? 'rotate-180' : ''}`} />
-                      </button>
-                      {isExportMenuOpen && (
-                        <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden z-50">
-                          <div className="py-1">
-                            <button onClick={() => { openQuoteEditor(); setIsExportMenuOpen(false); }} disabled={!hasAnalyzedData} className="w-full text-left px-4 py-3 text-sm text-indigo-700 hover:bg-indigo-50 flex items-center gap-3 transition-colors border-b-2 border-indigo-100 disabled:opacity-50">
-                              <FaIcon name="file-invoice" className="text-indigo-600 w-5 text-center" size={18} />
-                              <div>
-                                <div className="font-bold">自社用に見積書を作成</div>
-                                <div className="text-xs text-indigo-400 mt-0.5">抽出データから御見積書を発行</div>
-                              </div>
-                            </button>
-                            <button onClick={() => { exportCSV(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-b border-gray-100"><FaIcon name="file-csv" className="text-gray-500 w-5 text-center" size={18} /><div><div className="font-bold">抽出データ：CSV形式で保存</div></div></button>
-                            <button onClick={() => { exportExcel(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-b border-gray-100"><FaIcon name="file-excel" className="text-green-600 w-5 text-center" size={18} /><div><div className="font-bold text-green-700">抽出データ：Excel形式で保存</div></div></button>
-                            <button onClick={() => { exportPDF(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-b border-gray-100"><FaIcon name="file-pdf" className="text-red-500 w-5 text-center" size={18} /><div><div className="font-bold text-red-600">抽出データ：PDF(一覧)で保存</div></div></button>
-                            <button onClick={() => { exportJSON(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors"><FaIcon name="file-code" className="text-gray-500 w-5 text-center" size={18} /><div><div className="font-bold">抽出データ：JSON形式で保存</div></div></button>
-                            <div className="bg-gray-50 p-3 border-t border-gray-200"><button onClick={() => { copyTSVToClipboard(); setIsExportMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-blue-600 bg-white border border-blue-200 hover:bg-blue-50 rounded-lg flex justify-center items-center gap-2 font-bold shadow-sm"><FaIcon name="copy" /> TSVをコピー</button></div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
                   </div>
                 </header>
 
                 {error && <div className="mb-4 p-3 bg-red-50 border-l-4 border-red-500 text-red-700 flex items-center gap-3 rounded text-sm"><FaIcon name="circle-exclamation" size={18} /> <p>{error}</p></div>}
 
-                <div className="mb-6 bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-wrap justify-between items-center gap-4">
-                  <div className="flex flex-wrap items-center gap-4">
-                    <input type="file" multiple accept="image/*,application/pdf" onChange={handleImageUpload} ref={fileInputRef} className="hidden" />
-                    <button onClick={handleUploadBtnClick} disabled={loading || isUploading} className="flex items-center gap-2 px-4 py-2 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 font-medium text-gray-700 disabled:opacity-50" title="Ctrl+V (MacはCmd+V) で画像の直接貼り付けも可能です">
-                      <FaIcon name={isUploading ? "spinner" : "upload"} size={16} className={isUploading ? "fa-spin" : ""} /> 
-                      {isUploading ? '読み込み中...' : (imageFiles.length > 0 ? `${imageFiles.length}枚のファイルを読込済み` : '画像/PDFを選択(複数可)')}
-                    </button>
-                    <span className="text-xs text-gray-400 hidden sm:inline-block font-medium">または Ctrl+V で画像貼付</span>
-                    <button onClick={createBlankQuote} className="flex items-center gap-2 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-md hover:bg-indigo-100 font-bold shadow-sm transition-colors">
-                      <FaIcon name="file-pen" size={16} />
-                      白紙から見積書を作成
-                    </button>
-                    {imageFiles.length > 0 && (
-                      <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 p-1.5 rounded-lg ml-2">
-                        <button disabled={currentFileIndex === 0 || isAnalyzingAll} onClick={() => setCurrentFileIndex(i => i - 1)} className="p-1.5 text-gray-500 hover:bg-gray-200 rounded disabled:opacity-30"><FaIcon name="chevron-left" /></button>
-                        <div className="text-sm font-medium w-32 text-center flex flex-col items-center"><span className="text-gray-700">{currentFileIndex + 1} / {imageFiles.length}</span><span className="text-xs text-gray-400 truncate w-full" title={imageFiles[currentFileIndex].name}>{imageFiles[currentFileIndex].name}</span></div>
-                        <button disabled={currentFileIndex === imageFiles.length - 1 || isAnalyzingAll} onClick={() => setCurrentFileIndex(i => i + 1)} className="p-1.5 text-gray-500 hover:bg-gray-200 rounded disabled:opacity-30"><FaIcon name="chevron-right" /></button>
-                      </div>
-                    )}
-                  </div>
+                {/* ★ 中段ステップバーUI (v1.48 グレーアウト＆現在位置表示対応) */}
+                <div className="mb-6 bg-white p-3 rounded-xl shadow-sm border border-gray-200 overflow-visible">
+                  <div className="flex flex-wrap items-center gap-2">
+                    
+                    {/* Step 1: 読込 */}
+                    <div className={`flex items-center gap-2 p-1.5 rounded-lg border relative transition-all ${currentStep === 1 ? 'bg-red-50 border-red-300 ring-2 ring-red-200' : 'bg-gray-50 border-gray-200'}`}>
+                      {currentStep === 1 && <div className="absolute -top-2 -left-2 w-4 h-4 bg-red-500 rounded-full border-2 border-white shadow-sm animate-pulse"></div>}
+                      <span className={`text-[10px] font-bold px-1 ${currentStep === 1 ? 'text-red-500' : 'text-gray-400'}`}>1.読込</span>
+                      
+                      <input type="file" multiple accept="image/*,application/pdf" onChange={handleImageUpload} ref={fileInputRef} className="hidden" />
+                      <button onClick={handleUploadBtnClick} disabled={loading || isUploading} className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50 font-medium text-gray-700 text-sm disabled:opacity-50">
+                        <FaIcon name={isUploading ? "spinner" : "upload"} size={14} className={isUploading ? "fa-spin" : ""} /> 
+                        {isUploading ? '読み込み中...' : (imageFiles.length > 0 ? `${imageFiles.length}枚のファイルを読込済み` : 'ファイル読込or画像ペースト')}
+                      </button>
+                      
+                      <button onClick={createBlankQuote} className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded hover:bg-indigo-100 font-bold text-sm transition-colors">
+                        <FaIcon name="file-pen" size={14} />
+                        白紙から作成
+                      </button>
 
-                  <div className="flex gap-2">
-                    <button onClick={analyzeCurrentImage} disabled={!imageSrc || loading || isAnalyzingAll || !userApiKey} className="flex items-center gap-2 px-4 py-2 bg-white border border-blue-600 text-blue-600 rounded-md hover:bg-blue-50 disabled:opacity-50 font-bold"><FaIcon name={loading && !isAnalyzingAll ? "spinner" : "play"} size={16} className={loading && !isAnalyzingAll ? "fa-spin" : ""} />表示中を処理</button>
-                    {imageFiles.length > 1 && <button onClick={() => isAnalyzingAll ? null : openPageSelectModal()} disabled={!imageSrc || loading || !userApiKey} className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 disabled:opacity-50 font-bold"><FaIcon name={isAnalyzingAll ? "spinner" : "list-check"} size={16} className={isAnalyzingAll ? "fa-spin" : ""} />{isAnalyzingAll ? `一括処理中(${analyzingIndex + 1}/${imageFiles.length})` : '選択して一括'}</button>}
+                      {imageFiles.length > 0 && (
+                        <div className="flex items-center gap-2 bg-white border border-gray-200 p-1 rounded ml-1">
+                          <button disabled={currentFileIndex === 0 || isAnalyzingAll} onClick={() => setCurrentFileIndex(i => i - 1)} className="p-1 text-gray-500 hover:bg-gray-100 rounded disabled:opacity-30"><FaIcon name="chevron-left" size={12} /></button>
+                          <div className="text-xs font-medium w-24 text-center flex flex-col items-center leading-tight">
+                            <span className="text-gray-700">{currentFileIndex + 1} / {imageFiles.length}</span>
+                            <span className="text-[10px] text-gray-400 truncate w-full" title={imageFiles[currentFileIndex].name}>{imageFiles[currentFileIndex].name}</span>
+                          </div>
+                          <button disabled={currentFileIndex === imageFiles.length - 1 || isAnalyzingAll} onClick={() => setCurrentFileIndex(i => i + 1)} className="p-1 text-gray-500 hover:bg-gray-100 rounded disabled:opacity-30"><FaIcon name="chevron-right" size={12} /></button>
+                        </div>
+                      )}
+                    </div>
+
+                    <FaIcon name="chevron-right" className="text-gray-300" size={12} />
+
+                    {/* Step 2: 抽出 (Step1のときはグレーアウト) */}
+                    <div className={`flex items-center gap-2 p-1.5 rounded-lg border relative transition-all ${currentStep === 2 ? 'bg-red-50 border-red-300 ring-2 ring-red-200' : (currentStep < 2 ? 'bg-gray-100 border-gray-200 opacity-50 grayscale pointer-events-none' : 'bg-gray-50 border-gray-200')}`}>
+                      {currentStep === 2 && <div className="absolute -top-2 -left-2 w-4 h-4 bg-red-500 rounded-full border-2 border-white shadow-sm animate-pulse"></div>}
+                      <span className={`text-[10px] font-bold px-1 ${currentStep === 2 ? 'text-red-500' : 'text-gray-400'}`}>2.抽出</span>
+                      
+                      <button onClick={handleExtractQuote} disabled={!imageSrc || loading || isOcrLoading || isAnalyzingAll || !userApiKey} className="flex items-center gap-2 px-3 py-1.5 bg-white border border-blue-600 text-blue-600 rounded hover:bg-blue-50 disabled:opacity-50 font-bold text-sm">
+                        <FaIcon name={loading && !isAnalyzingAll ? "spinner" : "file-invoice"} size={14} className={loading && !isAnalyzingAll ? "fa-spin" : ""} />
+                        見積を抽出
+                      </button>
+                      
+                      <button onClick={handleExtractText} disabled={!imageSrc || loading || isOcrLoading || isAnalyzingAll || !userApiKey} className="flex items-center gap-2 px-3 py-1.5 bg-white border border-emerald-600 text-emerald-600 rounded hover:bg-emerald-50 disabled:opacity-50 font-bold text-sm">
+                        <FaIcon name={isOcrLoading ? "spinner" : "file-lines"} size={14} className={isOcrLoading ? "fa-spin" : ""} />
+                        テキスト抽出
+                      </button>
+
+                      {imageFiles.length > 1 && (
+                        <button onClick={() => isAnalyzingAll ? null : openPageSelectModal()} disabled={!imageSrc || loading || isOcrLoading || !userApiKey} className="flex items-center gap-2 px-3 py-1.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 disabled:opacity-50 font-bold text-sm ml-1">
+                          <FaIcon name={isAnalyzingAll ? "spinner" : "list-check"} size={14} className={isAnalyzingAll ? "fa-spin" : ""} />
+                          {isAnalyzingAll ? `一括処理中(${analyzingIndex + 1}/${imageFiles.length})` : '選択して一括'}
+                        </button>
+                      )}
+                    </div>
+
+                    <FaIcon name="chevron-right" className="text-gray-300" size={12} />
+
+                    {/* Step 3: 完了 (Step2以下のときはグレーアウト) */}
+                    <div className={`flex items-center gap-2 p-1.5 rounded-lg border relative transition-all ${currentStep === 3 ? 'bg-red-50 border-red-300 ring-2 ring-red-200' : (currentStep < 3 ? 'bg-gray-100 border-gray-200 opacity-50 grayscale pointer-events-none' : 'bg-gray-50 border-gray-200')} `} ref={exportMenuRef}>
+                      {currentStep === 3 && <div className="absolute -top-2 -left-2 w-4 h-4 bg-red-500 rounded-full border-2 border-white shadow-sm animate-pulse"></div>}
+                      <span className={`text-[10px] font-bold px-1 ${currentStep === 3 ? 'text-red-500' : 'text-gray-400'}`}>3.完了</span>
+                      
+                      <button onClick={() => setIsExportMenuOpen(!isExportMenuOpen)} disabled={currentStep < 3} className="flex items-center gap-2 px-4 py-1.5 text-sm bg-indigo-600 text-white rounded font-bold hover:bg-indigo-700 disabled:opacity-50 shadow-sm transition-colors">
+                        <FaIcon name="download" size={14} /> 保存・出力 <FaIcon name="chevron-down" size={12} className={`transition-transform duration-200 ${isExportMenuOpen ? 'rotate-180' : ''}`} />
+                      </button>
+                      
+                      {isExportMenuOpen && (
+                        <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden z-[100]">
+                          <div className="py-1">
+                            {/* ▼ タブに応じて出力メニューの中身を切り替え ▼ */}
+                            {activeTab === 'quote' ? (
+                              <>
+                                <button onClick={() => { openQuoteEditor(); setIsExportMenuOpen(false); }} disabled={!hasAnalyzedData} className="w-full text-left px-4 py-3 text-sm text-indigo-700 hover:bg-indigo-50 flex items-center gap-3 transition-colors border-b-2 border-indigo-100 disabled:opacity-50">
+                                  <FaIcon name="file-invoice" className="text-indigo-600 w-5 text-center" size={18} />
+                                  <div>
+                                    <div className="font-bold">自社用に見積書を作成</div>
+                                    <div className="text-xs text-indigo-400 mt-0.5">抽出データから御見積書を発行</div>
+                                  </div>
+                                </button>
+                                <button onClick={() => { exportCSV(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-b border-gray-100"><FaIcon name="file-csv" className="text-gray-500 w-5 text-center" size={18} /><div><div className="font-bold">抽出データ：CSV形式で保存</div></div></button>
+                                <button onClick={() => { exportExcel(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-b border-gray-100"><FaIcon name="file-excel" className="text-green-600 w-5 text-center" size={18} /><div><div className="font-bold text-green-700">抽出データ：Excel形式で保存</div></div></button>
+                                <button onClick={() => { exportPDF(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-b border-gray-100"><FaIcon name="file-pdf" className="text-red-500 w-5 text-center" size={18} /><div><div className="font-bold text-red-600">抽出データ：PDF(一覧)で保存</div></div></button>
+                                <button onClick={() => { exportJSON(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors"><FaIcon name="file-code" className="text-gray-500 w-5 text-center" size={18} /><div><div className="font-bold">抽出データ：JSON形式で保存</div></div></button>
+                                <div className="bg-gray-50 p-3 border-t border-gray-200"><button onClick={() => { copyTSVToClipboard(); setIsExportMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-blue-600 bg-white border border-blue-200 hover:bg-blue-50 rounded-lg flex justify-center items-center gap-2 font-bold shadow-sm"><FaIcon name="copy" /> TSVをコピー</button></div>
+                              </>
+                            ) : (
+                              <>
+                                <button onClick={() => { downloadTextFile(); setIsExportMenuOpen(false); }} className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors border-b border-gray-100">
+                                  <FaIcon name="file-lines" className="text-emerald-500 w-5 text-center" size={18} />
+                                  <div><div className="font-bold">テキストファイル (.txt) で保存</div></div>
+                                </button>
+                                <div className="bg-gray-50 p-3 border-t border-gray-200">
+                                  <button onClick={() => { copyOcrText(); setIsExportMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-emerald-600 bg-white border border-emerald-200 hover:bg-emerald-50 rounded-lg flex justify-center items-center gap-2 font-bold shadow-sm"><FaIcon name="copy" /> テキストをコピー</button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -1736,7 +1945,6 @@
                       <div className="flex-grow p-4 overflow-auto bg-gray-100 flex justify-center">{imageSrc ? <img src={imageSrc} className="max-w-full h-auto object-contain" /> : <p className="text-gray-400 mt-10">ファイルがありません</p>}</div>
                     </div>
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col overflow-hidden">
-                      <div className="p-3 border-b border-gray-200 bg-gray-50 font-semibold text-gray-700 flex items-center gap-2"><FaIcon name="file-excel" size={16} /> 抽出データ</div>
                       {renderFormContent(false)}
                     </div>
                   </div>
