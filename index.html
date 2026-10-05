@@ -362,7 +362,9 @@
               let up = item.unit_price || 0;
               let p = item.price || 0;
               
-              if (q === 0 || q === "" || q == null) {
+              if (!(item.unit || '').trim() && up === 0 && p === 0) {
+                q = "";
+              } else if (q === 0 || q === "" || q == null) {
                 q = 1;
               }
               if (up === 0 && p !== 0) {
@@ -632,9 +634,14 @@
               original_total: originalTotal,
               items: allItems.map(item => {
                 let q = item.quantity;
-                if (q === 0 || q === "" || q == null) q = 1; 
                 let up = item.unit_price || 0;
                 let p = item.price || 0;
+
+                if (!(item.unit || '').trim() && up === 0 && p === 0) {
+                  q = "";
+                } else if (q === 0 || q === "" || q == null) {
+                  q = 1;
+                }
 
                 if (up === 0 && p !== 0) {
                   up = p;
@@ -888,6 +895,12 @@
             return pages;
           };
 
+          const getDefaultFileName = (data = {}) => {
+            const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+            const clean = (value, fallback) => String(value || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').trim() || fallback;
+            return `${today}_${clean(data.recipient, '宛名未入力')}_${clean(data.project_name, '件名未入力')}`;
+          };
+
           const downloadQuotePDF = () => {
             if (typeof window.html2pdf === 'undefined') {
               setError("PDF生成ライブラリが読み込まれていません。画面を再読み込みしてください。");
@@ -1021,7 +1034,7 @@
 
             container.innerHTML = htmlContent;
 
-            const safeFileName = quoteData.recipient ? `御見積書_${quoteData.recipient}.pdf` : `御見積書.pdf`;
+            const safeFileName = getDefaultFileName(quoteData) + '.pdf';
 
             const opt = {
               margin:       0,
@@ -1053,14 +1066,14 @@
             if (!printWindow) { setError("ポップアップがブロックされました。"); return; }
             
             const pages = calculatePagesForQuote();
-            const safeTitle = quoteData.recipient ? `御見積書_${quoteData.recipient}` : `御見積書`;
+            const safeTitle = getDefaultFileName(quoteData);
             
             let html = `
               <!DOCTYPE html>
               <html lang="ja">
               <head>
                 <meta charset="UTF-8">
-                <title>${safeTitle}</title>
+                <title>${safeTitle.replace(/&/g, '&amp;')}</title>
                 <style>
                   @page { size: A4 portrait; margin: 0; }
                   body { font-family: "Noto Sans JP", sans-serif; font-size: 12px; line-height: 1.4; color: #000; margin: 0; padding: 0; background: #525659; }
@@ -1465,7 +1478,7 @@
             <body>${tableHtml}</body></html>`;
 
             const blob = new Blob([htmlStr], { type: 'application/vnd.ms-excel' });
-            const safeFileName = quoteData.recipient ? `御見積書_${quoteData.recipient}.xls` : `御見積書.xls`;
+            const safeFileName = getDefaultFileName(quoteData) + '.xls';
 
             if (DRIVE_BACKUP_WEBHOOK_URL) {
               const reader = new FileReader();
@@ -1527,13 +1540,13 @@
               return { file_name: imageFiles[index]?.name || `file_${index+1}`, ...rest };
             });
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
-            const downloadAnchorNode = document.createElement('a'); downloadAnchorNode.setAttribute("href", dataStr); downloadAnchorNode.setAttribute("download", "extracted_documents_all.json"); document.body.appendChild(downloadAnchorNode); downloadAnchorNode.click(); downloadAnchorNode.remove();
+            const downloadAnchorNode = document.createElement('a'); downloadAnchorNode.setAttribute("href", dataStr); downloadAnchorNode.setAttribute("download", getDefaultFileName(extractedDataList[currentFileIndex]) + '.json'); document.body.appendChild(downloadAnchorNode); downloadAnchorNode.click(); downloadAnchorNode.remove();
           };
 
           const exportCSV = () => { 
             const { bom, csvContent } = generateCSVContent();
             const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' }); const url = URL.createObjectURL(blob);
-            const downloadAnchorNode = document.createElement('a'); downloadAnchorNode.setAttribute("href", url); downloadAnchorNode.setAttribute("download", "extracted_documents_all.csv"); document.body.appendChild(downloadAnchorNode); downloadAnchorNode.click(); downloadAnchorNode.remove();
+            const downloadAnchorNode = document.createElement('a'); downloadAnchorNode.setAttribute("href", url); downloadAnchorNode.setAttribute("download", getDefaultFileName(extractedDataList[currentFileIndex]) + '.csv'); document.body.appendChild(downloadAnchorNode); downloadAnchorNode.click(); downloadAnchorNode.remove();
           };
 
           const exportExcel = () => { 
@@ -1546,7 +1559,7 @@
                 data.items.forEach(item => { aoa.push([...baseRow, item.name || "", item.quantity || 0, item.unit || "", item.unit_price || 0, item.price || 0]); });
               } else { aoa.push([...baseRow, "", 0, "", 0, 0]); }
             });
-            const worksheet = XLSX.utils.aoa_to_sheet(aoa); const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, worksheet, "抽出データ"); XLSX.writeFile(workbook, "extracted_documents_all.xlsx");
+            const worksheet = XLSX.utils.aoa_to_sheet(aoa); const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, worksheet, "抽出データ"); XLSX.writeFile(workbook, getDefaultFileName(extractedDataList[currentFileIndex]) + '.xlsx');
           };
 
           const copyTSVToClipboard = () => { 
@@ -1649,7 +1662,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.42</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.43</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
