@@ -973,7 +973,7 @@
           };
 
           const getDefaultFileName = (data = {}) => {
-            const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+            const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).replace(/-/g, '');
             const clean = (value, fallback) => String(value || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').trim() || fallback;
             return `${today}_${clean(data.recipient, '宛名未入力')}_${clean(data.project_name, '件名未入力')}`;
           };
@@ -1817,7 +1817,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.49</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.50</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
