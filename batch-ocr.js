@@ -2,7 +2,12 @@
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const isPdf = file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
   const isSupported = file => isPdf(file) || /^image\/(jpeg|png|webp|heic|heif)$/.test(file.type) || /\.(jpe?g|png|webp|heic|heif)$/i.test(file.name);
-  const mimeType = file => file.type || ({ jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', heif: 'image/heif' }[file.name.split('.').pop().toLowerCase()]);
+  const mimeType = file => {
+    const type = (file.type || '').toLowerCase();
+    if (['image/jpg', 'image/pjpeg'].includes(type)) return 'image/jpeg';
+    if (type.startsWith('image/')) return type;
+    return { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', heif: 'image/heif' }[(file.name || '').split('.').pop().toLowerCase()];
+  };
   const fileKey = (file, path) => JSON.stringify([path, file.size, file.lastModified]);
   const readBase64 = file => new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -10,6 +15,43 @@
     reader.onerror = () => reject(new Error('ファイルを読み込めませんでした'));
     reader.readAsDataURL(file);
   });
+
+  async function prepareImage(file) {
+    // Work on a temporary image; retain the original File for subsequent attempts.
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType(file))) return file;
+    let image, release;
+    try {
+      if (scope.createImageBitmap) {
+        image = await scope.createImageBitmap(file, { imageOrientation: 'from-image' });
+        release = () => image.close();
+      } else {
+        const url = URL.createObjectURL(file);
+        release = () => URL.revokeObjectURL(url);
+        image = new Image();
+        await new Promise((resolve, reject) => {
+          image.onload = resolve;
+          image.onerror = () => reject(new Error('画像を読み込めませんでした'));
+          image.src = url;
+        });
+      }
+      const width = image.width, height = image.height;
+      if (!width || !height) throw new Error('画像の寸法を取得できませんでした');
+      const scale = Math.min(1, 2800 / Math.max(width, height));
+      if (scale === 1 && (file.size || 0) <= 4 * 1024 * 1024) return file;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      try {
+        const context = canvas.getContext('2d');
+        context.fillStyle = '#ffffff';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+        if (!blob) throw new Error('OCR用の画像を作成できませんでした');
+        return blob;
+      } finally { canvas.width = canvas.height = 0; }
+    } finally { if (release) release(); }
+  }
 
   async function collectEntries(entries, includeSubfolders = true) {
     const files = [];
@@ -57,8 +99,9 @@
   }
 
   async function recognizePage(file, apiKey, prompt, fetchFn = scope.fetch.bind(scope), wait = sleep) {
+    const image = await prepareImage(file);
     const payload = {
-      contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: mimeType(file), data: await readBase64(file) } }] }],
+      contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: mimeType(image), data: await readBase64(image) } }] }],
       generationConfig: {
         thinkingConfig: { thinkingBudget: 0 },
         responseMimeType: 'application/json',
@@ -75,7 +118,7 @@
     };
     for (let attempt = 0; attempt < 3; attempt++) {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 90000);
+      const timer = setTimeout(() => controller.abort(), 180000);
       let response, data;
       try {
         response = await fetchFn(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
@@ -83,7 +126,7 @@
         });
         if (typeof response.json === 'function') data = await response.json();
       } catch (error) {
-        if (error.name === 'AbortError') throw new Error('API応答が90秒以内に返りませんでした。必要なら再実行してください');
+        if (error.name === 'AbortError') throw new Error('API応答が180秒以内に返りませんでした。時間をおいて失敗分を再実行してください');
         throw error;
       } finally { clearTimeout(timer); }
       if (!response.ok) {
@@ -197,6 +240,6 @@
     return sheet;
   }
 
-  scope.BatchOCR = { sleep, isPdf, isSupported, mimeType, fileKey, readBase64, collectEntries, openPdf, renderPage, recognizePage, sheetName, sheetRows, sheetLayout, createSheet };
+  scope.BatchOCR = { sleep, isPdf, isSupported, mimeType, fileKey, readBase64, prepareImage, collectEntries, openPdf, renderPage, recognizePage, sheetName, sheetRows, sheetLayout, createSheet };
   if (typeof module !== 'undefined') module.exports = scope.BatchOCR;
 })(typeof window === 'undefined' ? globalThis : window);

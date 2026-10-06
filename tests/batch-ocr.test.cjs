@@ -5,6 +5,7 @@ const core = require('../batch-ocr.js');
 global.FileReader = class {
   readAsDataURL() { this.result = 'data:image/png;base64,dGVzdA=='; this.onload(); }
 };
+global.createImageBitmap = async () => ({ width: 800, height: 600, close() {} });
 const ok = rows => ({ ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify({ rows }) }] } }] }) });
 
 test('OCR preserves labels, multiline content, and individual table cells', async () => {
@@ -132,4 +133,41 @@ test('PDF conversion releases page and canvas resources even when rendering fail
   await assert.rejects(core.renderPage(pdf, 1), /render failure/);
   assert.equal(cleaned, 2);
   assert.equal(canvas.height, 0);
+});
+
+test('large JPEG images are resized with their aspect ratio and released after encoding', async () => {
+  const previousBitmap = global.createImageBitmap, previousDocument = global.document;
+  let closed = 0, dimensions, encoded;
+  const original = { type: 'image/jpeg', size: 632401 };
+  const output = new Blob(['resized'], { type: 'image/jpeg' });
+  const canvas = { getContext: () => ({ fillRect() {}, drawImage() {} }), toBlob: (resolve, type, quality) => { dimensions = [canvas.width, canvas.height]; encoded = [type, quality]; resolve(output); } };
+  global.createImageBitmap = async (file, options) => { assert.equal(file, original); assert.equal(options.imageOrientation, 'from-image'); return { width: 2541, height: 3499, close: () => closed++ }; };
+  global.document = { createElement: () => canvas };
+  try {
+    assert.equal(await core.prepareImage(original), output);
+    assert.deepEqual(dimensions, [2033, 2800]);
+    assert.deepEqual(encoded, ['image/jpeg', 0.9]);
+    assert.equal(closed, 1);
+    assert.equal(canvas.width, 0);
+    assert.equal(original.size, 632401);
+  } finally { global.createImageBitmap = previousBitmap; global.document = previousDocument; }
+});
+
+test('small images are kept as originals; MIME aliases are normalized', async () => {
+  const file = { name: 'small.jpg', type: 'image/pjpeg', size: 1000 };
+  assert.equal(core.mimeType(file), 'image/jpeg');
+  assert.equal(core.mimeType({ name: 'scan.JPG', type: 'application/octet-stream' }), 'image/jpeg');
+  assert.equal(await core.prepareImage(file), file);
+});
+
+test('API requests allow 180 seconds and do not silently resend timed-out OCR', async () => {
+  const previousSetTimeout = global.setTimeout, previousClearTimeout = global.clearTimeout;
+  const timers = []; let calls = 0;
+  global.setTimeout = (_, delay) => { timers.push(delay); return 1; };
+  global.clearTimeout = () => {};
+  try {
+    await assert.rejects(core.recognizePage({ type: 'image/jpeg', size: 1000 }, 'test', '', async () => { calls++; const error = new Error('aborted'); error.name = 'AbortError'; throw error; }), /180秒/);
+    assert.deepEqual(timers, [180000]);
+    assert.equal(calls, 1);
+  } finally { global.setTimeout = previousSetTimeout; global.clearTimeout = previousClearTimeout; }
 });
