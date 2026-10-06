@@ -36,6 +36,8 @@
 <body>
     <div id="root"></div>
 
+    <script src="./batch-ocr.js"></script>
+    <script type="text/babel" src="./batch-ocr.jsx" data-presets="react,env"></script>
     <script type="text/babel" data-type="module" data-presets="react,env">
         const { useState, useRef, useEffect } = React;
         
@@ -94,6 +96,7 @@
           const [ocrMode, setOcrMode] = useState('standard');
           const [ocrCustomPrompt, setOcrCustomPrompt] = useState('');
           const [isOcrLoading, setIsOcrLoading] = useState(false);
+          const [showBatchOcr, setShowBatchOcr] = useState(false);
 
           const panelRef = useRef(null);
           const fileInputRef = useRef(null);
@@ -316,6 +319,7 @@
 
           useEffect(() => {
             const handlePaste = (e) => {
+              if (showBatchOcr) return;
               const activeElement = document.activeElement;
               if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
                 return;
@@ -340,7 +344,7 @@
 
             window.addEventListener('paste', handlePaste);
             return () => window.removeEventListener('paste', handlePaste);
-          }, []);
+          }, [showBatchOcr]);
 
           useEffect(() => {
             if (imageFiles.length > 0 && imageFiles[currentFileIndex]) {
@@ -1804,6 +1808,7 @@
               onMouseUp={resizeState ? endResize : null}
               onMouseLeave={resizeState ? endResize : null}
             >
+              <window.BatchOcrPanel open={showBatchOcr} apiKey={userApiKey} onClose={() => setShowBatchOcr(false)} onSettings={() => { setShowBatchOcr(false); setShowSettings(true); }} />
               {toastMessage && (
                 <div className="fixed top-6 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-5 py-3 rounded-lg shadow-2xl z-50 flex items-center gap-3 transition-all animate-fade-in-down">
                   {toastMessage.includes("中") ? <FaIcon name="spinner" className="fa-spin text-blue-400" size={20} /> : <FaIcon name="circle-check" className="text-green-400" size={20} />}
@@ -1817,10 +1822,11 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.50</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.51</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
+                    <button disabled={loading || isUploading || isOcrLoading || isAnalyzingAll} onClick={() => setShowBatchOcr(true)} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-emerald-50 border border-emerald-300 rounded-lg hover:bg-emerald-100 text-emerald-800 font-bold disabled:opacity-40"><FaIcon name="layer-group" size={16} /> 一括OCR</button>
                     <div className="flex bg-gray-200 p-1 rounded-lg">
                       <button onClick={() => setViewMode('split')} className={`px-3 py-1.5 rounded-md flex items-center gap-2 text-sm font-medium transition-all ${viewMode === 'split' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}><FaIcon name="table-columns" size={16} /> 分割表示</button>
                       <button onClick={() => setViewMode('overlay')} className={`px-3 py-1.5 rounded-md flex items-center gap-2 text-sm font-medium transition-all ${viewMode === 'overlay' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}><FaIcon name="layer-group" size={16} /> 透過表示</button>
