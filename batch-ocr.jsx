@@ -71,7 +71,7 @@ function BatchOcrPanel({ open, apiKey, onClose, onSettings }) {
     finally { registeringRef.current = false; setRegistering(false); }
   }
 
-  const prompt = 'この画像の全文を、原文の順番を保って項目ごとに文字起こししてください。要約・言い換え・推測・省略をしないでください。名前、住所、電話番号など、ラベルがある項目はlabelに原文の項目名、contentに内容を入れて1項目1行にしてください。住所や説明文の途中の改行は同じcontent内に残してください。見出しに続く説明文は見出しと本文で1行にしてください。見出しのない文章は空行や区切り線を目安に段落ごとに1行とし、labelは空文字にしてください。箇条書きは1件1行にしてください。表は見出し行も含め原稿の各行を1行ずつ出力し、labelは空文字、contentには全ての列の値を左から順に「 | 」で区切って入れてください。空欄の列も区切りを残し、列の順番と行の順番を保ってください。表にない列名や値を追加しないでください。表の枠線は文字にせず、文章を区切る横線は独立した行のcontentに「────────」として残してください。文字がない画像はrowsを空配列にしてください。';
+  const prompt = 'この画像の全文を、原文の順番を保って項目ごとに文字起こししてください。要約・言い換え・推測・省略をしないでください。名前、住所、電話番号など、ラベルがある項目はlabelに原文の項目名、contentに内容を入れて1項目1行にしてください。住所や説明文の途中の改行は同じcontent内に残してください。見出しに続く説明文は見出しと本文で1行にしてください。見出しのない文章は空行や区切り線を目安に段落ごとに1行とし、labelは空文字にしてください。箇条書きは1件1行にしてください。表は見出し行も含め原稿の各行を1行ずつ出力し、labelとcontentは空文字、cellsには各セルの文字列を左から順に入れてください。文字列を区切り記号で連結しないでください。空欄のセルは空文字として同じ列位置に残し、各行の列数をそろえてください。同じ表の各行には同じtable_idを入れ、異なる表には異なるtable_idを入れてください。原稿の見出し行だけis_headerをtrueにしてください。見出しのない表に見出しを追加しないでください。結合セルは左上に文字を入れ、覆われる列のcellsは空文字にしてください。通常の文章や項目にはcellsを空配列、table_idを空文字、is_headerをfalseにしてください。列の順番と行の順番を保ってください。表にない列名や値を追加しないでください。表の枠線は文字にせず、文章を区切る横線は独立した行のcontentに「────────」として残してください。文字がない画像はrowsを空配列にしてください。';
 
   async function start() {
     if (busyRef.current || registeringRef.current || !jobsRef.current.length) return;
@@ -124,17 +124,16 @@ function BatchOcrPanel({ open, apiKey, onClose, onSettings }) {
 
   function exportWorkbook() {
     try {
-      if (typeof XLSX === 'undefined') throw new Error('Excelライブラリを読み込めませんでした');
-      const workbook = XLSX.utils.book_new();
+      const xlsx = window.BatchXLSX;
+      if (!xlsx) throw new Error('罫線付きExcel出力ライブラリを読み込めませんでした。画面を再読み込みしてください');
+      const workbook = xlsx.utils.book_new();
       const used = new Set();
       for (const job of jobsRef.current) {
-        const rows = core.sheetRows(job);
-        const sheet = XLSX.utils.aoa_to_sheet(rows);
-        sheet['!cols'] = [{ wch: 28 }, { wch: 100 }];
-        XLSX.utils.book_append_sheet(workbook, sheet, core.sheetName(job.path, used));
+        const sheet = core.createSheet(job, xlsx);
+        xlsx.utils.book_append_sheet(workbook, sheet, core.sheetName(job.path, used));
       }
       const date = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).replace(/-/g, '');
-      XLSX.writeFile(workbook, `${date}_一括OCR.xlsx`);
+      xlsx.writeFile(workbook, `${date}_一括OCR.xlsx`);
       setMessage('Excelを保存しました。未処理・失敗ページも各シートに表示しています。');
     } catch (error) { setMessage(`Excel保存エラー: ${error.message}`); }
   }
@@ -153,7 +152,7 @@ function BatchOcrPanel({ open, apiKey, onClose, onSettings }) {
           <button onClick={onClose} disabled={locked} className="px-3 py-1 border rounded disabled:opacity-40">閉じる</button>
         </header>
         <div className="p-4 overflow-y-auto space-y-4">
-          <p className="text-sm text-gray-600">画像・PDFを登録し、項目ごとに「項目名／内容」の2列で出力します。表の列は「 | 」で区切ります。元ファイル1つにつきExcelの1シートにまとめます。</p>
+          <p className="text-sm text-gray-600">画像・PDFを登録し、項目ごとに「項目名／内容」の2列で出力します。表はExcelのセルに分け、罫線を付けて出力します。元ファイル1つにつきExcelの1シートにまとめます。</p>
           <div onDragOver={event => event.preventDefault()} onDrop={handleDrop} className={`border-2 border-dashed rounded-lg p-5 text-center ${locked ? 'bg-gray-100 border-gray-200' : 'border-emerald-300 bg-emerald-50'}`}>
             <p className="font-medium mb-3">画像・PDF、またはフォルダをここにドロップ</p>
             <div className="flex justify-center gap-3 flex-wrap">
@@ -181,7 +180,7 @@ function BatchOcrPanel({ open, apiKey, onClose, onSettings }) {
               <td className="p-2 text-center whitespace-nowrap"><button onClick={() => setPreviewId(job.id)} className="text-emerald-700 underline mr-3">結果</button><button disabled={locked} onClick={() => { updateJobs(list => list.filter(item => item.id !== job.id)); if (previewId === job.id) setPreviewId(null); }} className="text-gray-500 underline disabled:opacity-40">削除</button></td>
             </tr>)}</tbody>
           </table></div>}
-          {preview && <div className="border rounded p-3"><h3 className="font-bold mb-2 break-all">{preview.path}</h3><div className="overflow-x-auto max-h-80 overflow-y-auto"><table className="w-full text-sm"><tbody>{core.sheetRows(preview).slice(1).map((row, index) => <tr key={index} className="border-b"><td className="p-2 align-top whitespace-pre-wrap w-1/3">{row[0]}</td><td className="p-2 align-top whitespace-pre-wrap">{row[1]}</td></tr>)}</tbody></table></div></div>}
+          {preview && <div className="border rounded p-3"><h3 className="font-bold mb-2 break-all">{preview.path}</h3><div className="overflow-x-auto max-h-80 overflow-y-auto"><table className="w-full text-sm"><tbody>{core.sheetRows(preview).slice(1).map((row, index) => <tr key={index} className="border-b">{row.map((cell, column) => <td key={column} className="p-2 align-top whitespace-pre-wrap border border-gray-200">{cell}</td>)}</tr>)}</tbody></table></div></div>}
         </div>
       </section>
     </div>

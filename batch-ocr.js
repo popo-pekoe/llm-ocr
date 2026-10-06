@@ -64,7 +64,11 @@
         responseMimeType: 'application/json',
         responseSchema: {
           type: 'OBJECT', required: ['rows'], properties: {
-            rows: { type: 'ARRAY', items: { type: 'OBJECT', required: ['label', 'content'], properties: { label: { type: 'STRING' }, content: { type: 'STRING' } } } }
+            rows: { type: 'ARRAY', items: { type: 'OBJECT', required: ['label', 'content'], properties: {
+              label: { type: 'STRING' }, content: { type: 'STRING' },
+              cells: { type: 'ARRAY', items: { type: 'STRING' } },
+              table_id: { type: 'STRING' }, is_header: { type: 'BOOLEAN' }
+            } } }
           }
         }
       }
@@ -99,6 +103,7 @@
       const text = candidate?.content?.parts?.filter(part => !part.thought).map(part => part.text || '').join('');
       const result = JSON.parse(text || '{}');
       if (!Array.isArray(result.rows) || result.rows.some(row => !row || typeof row.label !== 'string' || typeof row.content !== 'string')) throw new Error('OCR結果の形式が不正です');
+      if (result.rows.some(row => (row.cells !== undefined && (!Array.isArray(row.cells) || row.cells.some(cell => typeof cell !== 'string'))) || (row.table_id !== undefined && typeof row.table_id !== 'string') || (row.is_header !== undefined && typeof row.is_header !== 'boolean'))) throw new Error('表のOCR結果の形式が不正です');
       return result.rows;
     }
   }
@@ -115,23 +120,83 @@
     return candidate;
   }
 
-  function sheetRows(job) {
+  function sheetLayout(job) {
     const rows = [['元ファイル', job.path], ['項目', '内容']];
+    const tables = [];
     for (let i = 0; i < job.pageCount; i++) {
+      let table = null;
       if (job.pageCount > 1) rows.push([`── ${i + 1}ページ目 ──`, '']);
       const page = job.pages[i];
       if (page?.status === 'done') {
         if (!page.rows.length) rows.push(['', '（文字なし）']);
         for (const row of page.rows) {
+          if (row.cells?.length) {
+            const id = row.table_id || '';
+            if (!table || table.id !== id) {
+              if (table) rows.push(['', '']);
+              table = { id, start: rows.length, end: rows.length, columns: 0, headers: [] };
+              tables.push(table);
+            }
+            table.columns = Math.max(table.columns, row.cells.length);
+            if (row.is_header) table.headers.push(rows.length);
+            const count = Math.max(1, ...row.cells.map(cell => Math.ceil(cell.length / 32767)));
+            for (let part = 0; part < count; part++) rows.push(row.cells.map(cell => cell.slice(part * 32767, (part + 1) * 32767)));
+            table.end = rows.length - 1;
+            continue;
+          }
+          table = null;
           // Excel cells hold up to 32,767 characters; preserve oversized text in continuation rows.
           const count = Math.max(1, Math.ceil(row.label.length / 32767), Math.ceil(row.content.length / 32767));
           for (let part = 0; part < count; part++) rows.push([row.label.slice(part * 32767, (part + 1) * 32767), row.content.slice(part * 32767, (part + 1) * 32767)]);
         }
       } else rows.push([page?.status === 'failed' ? 'OCR失敗' : '未処理', page?.error || '']);
     }
-    return rows;
+    // Pad short rows so blank cells receive the same grid borders as populated cells.
+    for (const table of tables) {
+      for (let r = table.start; r <= table.end; r++) while (rows[r].length < table.columns) rows[r].push('');
+    }
+    return { rows, tables };
   }
 
-  scope.BatchOCR = { sleep, isPdf, isSupported, mimeType, fileKey, readBase64, collectEntries, openPdf, renderPage, recognizePage, sheetName, sheetRows };
+  const sheetRows = job => sheetLayout(job).rows;
+
+  function createSheet(job, xlsx) {
+    const { rows, tables } = sheetLayout(job);
+    const sheet = xlsx.utils.aoa_to_sheet(rows);
+    const columns = Math.max(2, ...tables.map(table => table.columns));
+    const widths = Array.from({ length: columns }, (_, c) => columns === 2 ? (c === 0 ? 28 : 100) : (c === 0 ? 28 : 24));
+    const tableRows = new Set();
+    const lineWidth = text => Array.from(text).reduce((sum, ch) => sum + (ch.codePointAt(0) > 255 ? 2 : 1), 0);
+    sheet['!cols'] = widths.map(wch => ({ wch }));
+    sheet['!rows'] = [];
+    sheet['!merges'] = [];
+    const edge = { style: 'thin', color: { rgb: '808080' } };
+    for (const table of tables) {
+      for (let r = table.start; r <= table.end; r++) {
+        tableRows.add(r);
+        for (let c = 0; c < table.columns; c++) {
+          const address = xlsx.utils.encode_cell({ r, c });
+          sheet[address] ||= { t: 's', v: '' };
+          sheet[address].s = { border: { top: edge, bottom: edge, left: edge, right: edge } };
+          if (table.headers.includes(r)) Object.assign(sheet[address].s, { font: { name: 'Yu Gothic', sz: 11, bold: true }, fill: { patternType: 'solid', fgColor: { rgb: 'F1F5F9' } } });
+        }
+      }
+    }
+    rows.forEach((row, r) => {
+      const isTable = tableRows.has(r);
+      if (!isTable && columns > 2) sheet['!merges'].push({ s: { r, c: 1 }, e: { r, c: columns - 1 } });
+      let lines = 1;
+      row.forEach((value, c) => {
+        const cell = sheet[xlsx.utils.encode_cell({ r, c })];
+        if (cell) cell.s = { font: { name: 'Yu Gothic', sz: 11 }, ...cell.s, alignment: { vertical: 'top', wrapText: true } };
+        const width = !isTable && c === 1 ? widths.slice(1).reduce((sum, w) => sum + w, 0) : widths[c];
+        lines = Math.max(lines, String(value).split('\n').reduce((sum, line) => sum + Math.max(1, Math.ceil(lineWidth(line) / Math.max(1, width - 2))), 0));
+      });
+      sheet['!rows'][r] = { hpt: Math.min(409, Math.max(22, lines * 16 + 6)) };
+    });
+    return sheet;
+  }
+
+  scope.BatchOCR = { sleep, isPdf, isSupported, mimeType, fileKey, readBase64, collectEntries, openPdf, renderPage, recognizePage, sheetName, sheetRows, sheetLayout, createSheet };
   if (typeof module !== 'undefined') module.exports = scope.BatchOCR;
 })(typeof window === 'undefined' ? globalThis : window);

@@ -7,8 +7,8 @@ global.FileReader = class {
 };
 const ok = rows => ({ ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify({ rows }) }] } }] }) });
 
-test('OCR preserves labels, multiline content, and pipe-separated table rows', async () => {
-  const rows = [{ label: '住所', content: '東京都\n1-2-3' }, { label: '', content: '品名 | 数量 | 金額' }, { label: '', content: '部材 |  | 1,000' }];
+test('OCR preserves labels, multiline content, and individual table cells', async () => {
+  const rows = [{ label: '住所', content: '東京都\n1-2-3' }, { label: '', content: '', cells: ['品名', '数量', '金額'], table_id: '1', is_header: true }, { label: '', content: '', cells: ['部材', '', '1,000'], table_id: '1', is_header: false }];
   let request;
   const result = await core.recognizePage({ type: 'image/png' }, 'test-key', '全文', async (url, options) => { request = JSON.parse(options.body); return ok(rows); });
   assert.deepEqual(result, rows);
@@ -36,7 +36,50 @@ test('a retry can succeed without changing the returned data', async () => {
 test('truncated and malformed responses cannot be recorded as success', async () => {
   await assert.rejects(core.recognizePage({ type: 'image/png' }, 'test', '', async () => ({ ok: true, json: async () => ({ candidates: [{ finishReason: 'MAX_TOKENS' }] }) })), /MAX_TOKENS/);
   await assert.rejects(core.recognizePage({ type: 'image/png' }, 'test', '', async () => ok([{ label: '名前', content: 123 }])), /形式/);
+  await assert.rejects(core.recognizePage({ type: 'image/png' }, 'test', '', async () => ok([{ label: '', content: '', cells: ['数量', 123] }])), /形式/);
   assert.deepEqual(await core.recognizePage({ type: 'image/png' }, 'test', '', async () => ok([])), []);
+});
+
+test('tables retain cells, blank columns, headers, and separate table ranges', () => {
+  const job = { path: 'test.pdf', pageCount: 1, pages: { 0: { status: 'done', rows: [
+    { label: '名前', content: '山田' },
+    { label: '', content: '', cells: ['品名', '数量', '金額'], table_id: 'a', is_header: true },
+    { label: '', content: '', cells: ['部材', '', '1,000'], table_id: 'a' },
+    { label: '', content: '', cells: ['備考'], table_id: 'a' },
+    { label: '', content: '', cells: ['日付', '内容'], table_id: 'b' },
+    { label: '注意事項', content: '原文のまま\n折り返し' }
+  ] } } };
+  const layout = core.sheetLayout(job);
+  assert.deepEqual(layout.rows[3], ['品名', '数量', '金額']);
+  assert.deepEqual(layout.rows[4], ['部材', '', '1,000']);
+  assert.deepEqual(layout.rows[5], ['備考', '', '']);
+  assert.equal(layout.tables.length, 2);
+  assert.deepEqual(layout.tables[0], { id: 'a', start: 3, end: 5, columns: 3, headers: [3] });
+  assert.deepEqual(layout.tables[1], { id: 'b', start: 7, end: 7, columns: 2, headers: [] });
+});
+
+test('worksheet formatting borders every table cell and only merges text outside tables', () => {
+  const job = { path: 'test.png', pageCount: 1, pages: { 0: { status: 'done', rows: [
+    { label: '電話番号', content: '0123' },
+    { label: '', content: '', cells: ['品名', '数量', '金額'], is_header: true },
+    { label: '', content: '', cells: ['=1+1', '', '1,000'] }
+  ] } } };
+  const xlsx = { utils: {
+    encode_cell: ({ r, c }) => `${String.fromCharCode(65 + c)}${r + 1}`,
+    aoa_to_sheet: rows => Object.fromEntries(rows.flatMap((row, r) => row.map((v, c) => [`${String.fromCharCode(65 + c)}${r + 1}`, { t: 's', v }])))
+  } };
+  const sheet = core.createSheet(job, xlsx);
+  assert.equal(sheet.A4.v, '品名');
+  assert.equal(sheet.A4.s.font.bold, true);
+  for (const address of ['A4', 'B4', 'C4', 'A5', 'B5', 'C5']) {
+    for (const side of ['top', 'bottom', 'left', 'right']) assert.equal(sheet[address].s.border[side].style, 'thin');
+    assert.equal(sheet[address].s.alignment.wrapText, true);
+  }
+  assert.equal(sheet.B5.v, '');
+  assert.equal(sheet.B3.v, '0123');
+  assert.equal(sheet.A5.v, '=1+1');
+  assert.equal(sheet.A5.t, 's');
+  assert(sheet['!merges'].every(merge => merge.s.r < 3));
 });
 
 test('directory traversal reads all batches including over 100 files and preserves subfolder paths', async () => {

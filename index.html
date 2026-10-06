@@ -13,6 +13,10 @@
     
     <!-- SheetJS (Excel出力用) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- 一括OCR用：罫線・折り返しに対応したExcel出力。既存のXLSXは保持。 -->
+    <script>window.originalXLSX = window.XLSX; window.XLSX = undefined;</script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+    <script>window.BatchXLSX = window.XLSX; window.XLSX = window.originalXLSX; delete window.originalXLSX;</script>
 
     <!-- PDF.js (PDFの画像化用) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -1822,7 +1826,7 @@
                     <h1 className="text-2xl font-bold text-gray-900 flex items-baseline gap-2">
                       <FaIcon name="file-excel" className="text-blue-600" size={24} />
                       AI DocuExtract
-                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.51</span>
+                      <span className="text-sm font-medium text-gray-400 ml-1 bg-gray-100 px-2 py-0.5 rounded-full">v1.52</span>
                     </h1>
                   </div>
                   <div className="flex items-center gap-4">
